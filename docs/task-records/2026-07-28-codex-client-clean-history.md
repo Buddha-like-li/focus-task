@@ -16,7 +16,8 @@
 - 实现者：`/root/client_repository_implementer`。
 - 审核者：待集成人指派的未参与实现者。
 - 集成人：`/root`。
-- 实现 SHA：提交后回填。
+- Clean root 实现 SHA：`55253fbd99db0ef069fd6ffaeede4c053df5547e`（`chore: establish clean Windows client repository`）。
+- 文档证据提交：本记录更新所在的后续 clean-history 提交。
 - 审核 SHA / 结论：待独立审核完成后回填。
 
 ## 实现结论
@@ -37,7 +38,7 @@
 
 ## 审核要求
 
-1. 审核者必须确认 `git log --all` 只存在新的 clean-history 提交，且没有 `legacy-origin`。
+1. 审核者必须确认 `git log --all` 只包含从上述 clean root 开始的 clean-history 提交，且没有 `legacy-origin`、旧项目提交或服务端历史。
 2. 审核者必须确认 `origin` 精确指向 `git@github.com:Buddha-like-li/focus-task.git`，但本任务没有任何 push。
 3. 审核者必须从 `git ls-files` 和全树文件名扫描确认没有服务代码、容器编排、数据库、数据卷、镜像 tar、`.env`、私钥、token 或账号密码。
 4. 审核者必须确认 Tauri bundle target 是 Windows NSIS，发布工作流没有 macOS/Web/Docker job，客户端 API base 固定为 `http://127.0.0.1:18765`。

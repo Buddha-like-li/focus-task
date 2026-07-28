@@ -39,7 +39,7 @@
 
 ## 独立审核最低检查
 
-1. 核对可达 Git 历史仅包含 clean-history 初始提交，且只配置 `origin`。
+1. 核对可达 Git 历史仅包含从 clean-history root commit `55253fbd99db0ef069fd6ffaeede4c053df5547e` 开始的本任务提交，且只配置 `origin`。
 2. 扫描索引中不存在 `backend/`、Docker/Compose、SQLite/数据目录、镜像/数据 tar、`.env`、密钥、token 或服务账号密码。
 3. 核对 `tauri.conf.json` 与 Release 工作流仅构建 Windows NSIS，并且 API origin 仍为 `http://127.0.0.1:18765`。
 4. 复跑 `npm test -- --run`、`npm run build`、`cargo fmt --check`、`git diff --check` 和相应 NSIS 构建。
