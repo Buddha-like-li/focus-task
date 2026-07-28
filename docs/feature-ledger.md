@@ -4,10 +4,10 @@
 
 ## 仓库与事实边界
 
-- 当前仓库是一个新的本地 Git 候选仓库，工作内容来自 `D:\工作工具\focus-task-client` 的 Windows 客户端快照 `2e1b6114cee5c3b9f1c1ff4fcd57ee9c656e27e6`。
+- 当前仓库是一个经独立审核的本地 Git 候选仓库，工作内容来自 `D:\工作工具\focus-task-client` 的 Windows 客户端快照 `2e1b6114cee5c3b9f1c1ff4fcd57ee9c656e27e6`。
 - 旧项目的提交图、tag、`legacy-origin`、服务端源码、Docker/Compose、SQLite 数据、数据卷归档、镜像 tar 和凭证均不在本仓库可达历史或索引中。
 - 本仓库只面向 Windows 11。Vue/Tauri 客户端固定访问 `http://127.0.0.1:18765`；任务和账户等业务数据以本机服务 API 为唯一来源。
-- clean root commit 是 `55253fbd99db0ef069fd6ffaeede4c053df5547e`；新仓库尚未推送、未打 tag、未创建 Release。提交和发布必须先通过独立审核，详见 [clean-history 任务记录](task-records/2026-07-28-codex-client-clean-history.md)。
+- clean root commit 是 `55253fbd99db0ef069fd6ffaeede4c053df5547e`，审核对象为 `5bb37999f33a532176cca426e23b878550f6cd1`；新仓库尚未推送、未打 tag、未创建 Release。详见 [clean-history 任务记录](task-records/2026-07-28-codex-client-clean-history.md)。
 
 ## 当前客户端能力
 
@@ -32,16 +32,17 @@
 
 - 来源工作树在建立本仓库前无未提交改动，来源 SHA 为 `2e1b611`。
 - 来源工作树的已记录客户端验证包括 `npm test -- --run`（25 项）、`npm run build`、`cargo fmt --check` 与 `git diff --check`；真实 NSIS 安装包已在 Windows 构建环境产生。
-- 本仓库的 clean-history 提交必须重新执行索引边界扫描、Git 历史/remote 核对和独立代码审核；结果写入对应任务记录后才可作为发布依据。
+- clean-history 已完成独立索引边界扫描、Git 历史/remote 核对和客户端代码审核：25 项前端测试、production build、Rust format check、diff check 和实际 NSIS bundle 均通过。NSIS SHA-256 为 `D9F18F8D2D38112E06FFAE6FB9B23F7EB790F28FA5628F00274E88405654BF7E`。
 
 ## 已知风险与门禁
 
 | 优先级 | 风险或限制 | 当前状态与要求 |
 |---|---|---|
-| P0 | 旧桌面安装目录中的本地任务不属于新服务数据源。 | 客户端不会迁移、覆盖、备份或删除旧数据。旧数据导入只能由独立服务迁移任务完成并独立复核；未验收前阻止为“兼容旧数据”的客户端发布。 |
+| P0 | 服务端导入卷的 bootstrap 防护尚未完成独立修复。 | 客户端不会迁移、覆盖、备份或删除旧数据。旧数据导入和 bootstrap 防护必须由独立服务任务完成并复核；在此之前阻止客户端发布 tag。 |
 | P1 | 新客户端与本地服务的 API 契约尚需端到端验收。 | 任何服务镜像、认证、附件或数据迁移变化都要在两个仓库建立对应任务记录并联调。 |
-| P1 | 当前 clean-history 候选仓库尚未通过独立审核。 | 禁止推送、tag 或 Release，直至审核者确认无服务/数据/凭证进入历史和索引。 |
+| P1 | clean-history 已通过独立审核但尚未推送。 | 确认服务 P0 已关闭和客户端/服务联调后，由集成人推送；不得把服务/数据/凭证加入历史或索引。 |
 | P1 | GitHub updater 需要可用的现有签名私钥及其密码。 | 不得把私钥或密码写入工作树、Git 历史、镜像或日志；仅由集成人在 GitHub repository secrets 配置。 |
+| P1 | 本地 NSIS bundle 未生成 `.sig`。 | 私钥密码不可用时，不能验证 updater/tag Release；本地安装包验收不受影响。 |
 | P2 | `frontend.log` 还没有容量上限或轮转策略。 | 建立独立客户端修复任务后处理，并在功能总账更新结论。 |
 
 ## 发布状态

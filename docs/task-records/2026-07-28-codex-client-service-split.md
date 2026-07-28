@@ -16,10 +16,13 @@
 - 基线 SHA：`39223023a99d287f5b9a2b33341bf8d3401ea3d7`（`v2.3.3`）。
 - 功能分支：`codex/client-service-split`。
 - 实现者：`/root/client_direct_service_implementer`。
-- 审核者：待集成人指派的独立客户端审核者。
+- 审核者：`/root/service_repo_implementer/client_service_boundary_audit`
+  与 `/root/client_clean_repo_reviewer`（均未参与客户端实现）。
 - 集成人：`/root`。
 - 实现 SHA：`441ceff31eb841123af0864a0f4dfe02d187e8a6`（`refactor: split Windows client from local service`）。
-- 审核 SHA：待独立审核完成后回填。
+- 审核对象 SHA：`2e1b6114cee5c3b9f1c1ff4fcd57ee9c656e27e6`。两次独立
+  只读审核均未产生代码提交；结论为客户端边界与 Windows 构建通过，服务
+  数据迁移/导入卷防护仍由独立服务任务门禁控制。
 
 ## 实现结论
 
@@ -49,19 +52,21 @@
 - `cargo fmt --check`：通过。
 - `git diff --check`：通过。
 - 客户端边界静态扫描（内嵌后端、`SERVER_URL`、同步 store、服务配置）：无命中。
-- `npx tauri build --bundles nsis`：未通过。本机没有 Visual C++ MSVC 的
-  `link.exe`；在安装 Build Tools 的 Windows 发布环境仍须重新执行并验收真实
-  `.exe`。这不是前端 TypeScript/Vite 构建失败。
+- `npx tauri build --bundles nsis`：已在本机 MSVC Windows 环境通过；当前
+  clean-history 候选的实际安装包为 `Focus Task_2.3.3_x64-setup.exe`，
+  SHA-256 `D9F18F8D2D38112E06FFAE6FB9B23F7EB790F28FA5628F00274E88405654BF7E`。
 
 ## 审核、风险与发布门禁
 
-- 独立代码审核：待执行；实现者不得自行合入、打 tag 或推送。
+- 独立代码审核：已通过客户端边界、Git 历史、Windows-only 发布路径和实际
+  NSIS 构建检查；实现者未自行合入、打 tag 或推送。
 - **P0 - 旧本地数据不迁移**：按本次边界，客户端不会读取、备份、迁移或删除旧
   安装目录中的任务、附件和报告。新服务使用其自己的持久数据卷，因此旧任务不会
   自动出现。必须由独立迁移任务完成并复核，或由集成人记录书面发布例外，才能
   为本次拆分打 tag 或发布。
 - 服务镜像启动、bootstrap 登录、附件/任务持久化及客户端到容器的联调，由独立
-  服务仓库任务记录和集成人验收；在该证据完成前不得声称端到端交付完成。
+  服务仓库任务记录和集成人验收；当前导入卷 bootstrap 防护 P0 尚在独立修复，
+  在该证据完成前不得声称端到端交付完成。
 - 本任务未推送、未合入、未打 tag、未发布。
 
 ## 修订记录（待独立复核）

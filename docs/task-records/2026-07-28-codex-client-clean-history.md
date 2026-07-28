@@ -14,11 +14,12 @@
 - 候选仓库：`D:\工作工具\focus-task-client-clean`。
 - 功能分支：`codex/client-clean-history`。
 - 实现者：`/root/client_repository_implementer`。
-- 审核者：待集成人指派的未参与实现者。
+- 审核者：`/root/client_clean_repo_reviewer`（未参与实现）。
 - 集成人：`/root`。
 - Clean root 实现 SHA：`55253fbd99db0ef069fd6ffaeede4c053df5547e`（`chore: establish clean Windows client repository`）。
 - 文档证据提交：本记录更新所在的后续 clean-history 提交。
-- 审核 SHA / 结论：待独立审核完成后回填。
+- 审核对象 SHA：`5bb37999f33a532176cca426e23b878550f6cd1`；审核者仅只读
+  审查，未产生代码提交。结论：通过，未发现新增 P0。
 
 ## 实现结论
 
@@ -33,7 +34,13 @@
 - 来源工作树 `git status --porcelain=v1`：无输出；使用的来源快照未夹带未提交文件。
 - 来源工作树 `git diff --check`：通过。
 - 来源索引路径扫描：未命中 `backend`、Docker/Compose、`data`、`dist`、`target`、`node_modules`、SQLite、凭证或 tar 文件。
-- 候选仓库将在初始提交后执行：`git log --all --oneline`、`git remote -v`、`git status --short`、`git ls-files` 边界扫描、敏感文件名扫描、`npm test -- --run`、`npm run build`、`cargo fmt --check` 和 `git diff --check`。
+- 独立审核已确认 `git log --all` 仅含 `55253fb` 与 `5bb3799`，
+  `git fsck --full --no-reflogs --unreachable` 无输出，且只有一个
+  `origin`，精确指向 `git@github.com:Buddha-like-li/focus-task.git`。
+- 独立审核已完成 Git 索引和敏感文件名扫描、`npm test -- --run`
+  （25/25）、`npm run build`、`cargo fmt --check` 与 `git diff --check`。
+  Windows NSIS 实际构建成功，产物 SHA-256 为
+  `D9F18F8D2D38112E06FFAE6FB9B23F7EB790F28FA5628F00274E88405654BF7E`。
 - 实现者不得自行把候选仓库推送、打 tag、创建 Release 或宣布发布完成。
 
 ## 审核要求
@@ -46,6 +53,8 @@
 
 ## 风险与发布门禁
 
-- **P0：旧本地任务迁移未完成独立验收。** 客户端不会碰触旧数据；没有服务迁移任务的独立证据时，禁止宣称旧任务可见或发布该兼容能力。
-- **P1：候选仓库尚未独立审核。** 未审核前禁止合入、推送、tag 和 Release。
+- **P0：服务端导入卷的 bootstrap 防护仍在独立修复。** 客户端不会碰触旧数据；在该服务端 P0 经独立复核前，禁止宣称旧任务兼容能力已完成或打客户端发布 tag。
+- **P1：候选仓库已独立审核，但尚未推送。** 推送前仍要由集成人确认服务 P0 已关闭和客户端/服务联调证据完整。
 - **P1：签名私钥和任何服务测试账号均不得进入本仓库。** GitHub secrets 和服务运行时配置由集成人/运维单独管理。
+- **P1：本地 NSIS 构建没有 `.sig`。** 私钥密码不可用时，不得把它作为
+  GitHub updater/tag Release 的签名验证证据；这不影响本地安装包验收。
