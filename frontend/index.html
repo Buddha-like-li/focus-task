@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Focus Task — 聚焦任务</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=DM+Serif+Display&display=swap" rel="stylesheet" />
+    <!-- 内联错误捕获：在模块加载前注册，任何错误都会显示在页面上 -->
+    <script>
+      window.addEventListener('error', function(e) {
+        var el = document.getElementById('app')
+        if (el) {
+          el.innerHTML = '<div style="max-width:720px;margin:40px auto;padding:24px;background:#fff0f0;color:#c0392b;border-radius:10px;font-family:monospace;white-space:pre-wrap;font-size:13px">'
+            + '<b>🚨 页面加载错误</b>\n\n'
+            + '消息：' + (e.message || '未知错误') + '\n'
+            + '文件：' + (e.filename || '未知') + '\n'
+            + '行号：' + (e.lineno || '?') + '\n\n'
+            + '请打开浏览器控制台（按 F12）查看完整堆栈。'
+            + '</div>'
+        }
+      })
+      window.addEventListener('unhandledrejection', function(e) {
+        var el = document.getElementById('app')
+        if (el) {
+          el.innerHTML = '<div style="max-width:720px;margin:40px auto;padding:24px;background:#fff0f0;color:#c0392b;border-radius:10px;font-family:monospace;white-space:pre-wrap;font-size:13px">'
+            + '<b>🚨 Promise 未捕获拒绝</b>\n\n'
+            + (e.reason ? String(e.reason) : '未知错误')
+            + '\n\n请打开浏览器控制台（按 F12）查看完整堆栈。'
+            + '</div>'
+        }
+      })
+    </script>
+  </head>
+  <body>
+    <div id="app" style="padding:40px;text-align:center;color:#999;font-size:14px">
+      ⏳ 正在加载 Focus Task...
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

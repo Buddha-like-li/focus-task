@@ -1,0 +1,13 @@
+{
+  "bundle": {
+    "resources": {
+      "WebView2Loader.dll": "WebView2Loader.dll"
+    },
+    "targets": ["nsis"],
+    "windows": {
+      "nsis": {
+        "installerHooks": "nsis-hooks.nsh"
+      }
+    }
+  }
+}

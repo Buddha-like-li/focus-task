@@ -1,0 +1,180 @@
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release-signing-preflight:
+    name: Verify tagged release signing
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require Tauri signing private key for release tags
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${TAURI_SIGNING_PRIVATE_KEY:-}" ]; then
+            echo "::error::TAURI_SIGNING_PRIVATE_KEY must be configured for tagged releases."
+            exit 1
+          fi
+
+  windows-desktop:
+    name: Windows desktop build
+    needs: release-signing-preflight
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Install MSVC build tools
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Run frontend tests
+        working-directory: frontend
+        run: npm test -- --run
+
+      - name: Build signed Windows client
+        working-directory: frontend
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: npx tauri build --bundles nsis
+
+      - name: Prepare Windows release artefacts
+        if: startsWith(github.ref, 'refs/tags/v')
+        working-directory: frontend/src-tauri
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          SOURCE_ASSET="Focus Task_${VERSION}_x64-setup.exe"
+          RELEASE_ASSET="Focus.Task_${VERSION}_x64-setup.exe"
+          SOURCE_DIR="target/release/bundle/nsis"
+          mkdir -p release-artefacts
+          for source_path in "$SOURCE_DIR/$SOURCE_ASSET" "$SOURCE_DIR/$SOURCE_ASSET.sig"; do
+            if [ ! -s "$source_path" ]; then
+              echo "::error::Missing or empty Windows updater asset: $source_path"
+              exit 1
+            fi
+          done
+          cp "$SOURCE_DIR/$SOURCE_ASSET" "release-artefacts/$RELEASE_ASSET"
+          cp "$SOURCE_DIR/$SOURCE_ASSET.sig" "release-artefacts/$RELEASE_ASSET.sig"
+
+      - name: Upload release artefacts
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: frontend/src-tauri/release-artefacts/*
+          generate_release_notes: false
+          draft: true
+          prerelease: ${{ contains(github.ref_name, '-') }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  release-notes:
+    name: Write release notes
+    needs: windows-desktop
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - name: Checkout full history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Write Windows client notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#v}"
+          PREV_TAG=$(git describe --tags --abbrev=0 "${TAG}^" 2>/dev/null || true)
+          if [ -n "$PREV_TAG" ]; then
+            RANGE="${PREV_TAG}..${TAG}"
+          else
+            RANGE="$(git rev-list --max-count=30 HEAD)"
+          fi
+          CHANGES=$(git log --pretty=format:'- %s' "$RANGE" | grep -vE '^(chore: release|chore\(release\): bump version to)' || true)
+          {
+            echo "## Focus Task ${TAG}"
+            echo
+            echo "### 本次更新"
+            if [ -n "$CHANGES" ]; then echo "$CHANGES"; else echo "- Windows 客户端维护性发布"; fi
+            echo
+            echo "### 下载"
+            echo
+            echo "| 平台 | 文件 |"
+            echo "|---|---|"
+            echo "| Windows 11 客户端 | \`Focus.Task_${VERSION}_x64-setup.exe\` |"
+            echo
+            echo "> 客户端连接本机 Focus Task 服务容器：\`http://127.0.0.1:18765\`。"
+          } > notes.md
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes-file notes.md
+
+  updater-manifest:
+    name: Publish Windows updater manifest
+    needs: [windows-desktop, release-notes]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - name: Download Windows signature
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          mkdir -p sigs
+          gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
+            --pattern "Focus.Task_*.exe.sig" --dir sigs --clobber
+
+      - name: Build and upload latest.json
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          ASSET="Focus.Task_${VERSION}_x64-setup.exe"
+          SIG_FILE="sigs/${ASSET}.sig"
+          if [ ! -s "$SIG_FILE" ]; then
+            echo "::error::Missing or empty Windows updater signature: $SIG_FILE"
+            exit 1
+          fi
+          BASE_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}"
+          jq -n \
+            --arg version "$VERSION" \
+            --arg notes "See the release notes for details." \
+            --arg pub_date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --arg signature "$(cat "$SIG_FILE")" \
+            --arg url "$BASE_URL/$ASSET" \
+            '{version: $version, notes: $notes, pub_date: $pub_date, platforms: {"windows-x86_64": {signature: $signature, url: $url}}}' \
+            > latest.json
+          gh release upload "$GITHUB_REF_NAME" latest.json --repo "$GITHUB_REPOSITORY" --clobber
+
+      - name: Publish signed release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=false

@@ -1,0 +1,62 @@
+.env
+.env.*
+frontend.log
+*.log
+
+# 凭证文件 - 绝不提交（PAT / token / signing key）
+# 防御性规则：任何疑似 credential 文件都拦下；需要示例时使用文档，不要提交真实值。
+*.pat
+*.token
+*token*.txt
+*pat*.txt
+ghcr-token
+ghcr-pat
+ghcr_pat
+secrets.local
+credentials.json
+.env.secret
+.npmrc
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*secret*
+*credential*
+*password*
+
+frontend/node_modules/
+frontend/dist/
+frontend/src-tauri/target/
+frontend/src-tauri/gen/
+.tauri-target/
+release/
+
+# This is a Windows client repository. Service code, service data, image exports,
+# and deployment manifests must remain in the separate local service repository.
+/backend/
+/docker/
+/data/
+/images/
+/service-images/
+/Dockerfile
+/docker-compose*.yml
+/docker-compose*.yaml
+/compose*.yml
+/compose*.yaml
+/frontend/Dockerfile
+/frontend/.dockerignore
+*.db
+*.sqlite
+*.sqlite3
+*.tar
+*.tar.gz
+*.tgz
+*.oci
+*.img
+
+.DS_Store
+**/.DS_Store
+
+# ZCode 会话/计划文件
+.zcode/
