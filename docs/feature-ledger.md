@@ -7,7 +7,7 @@
 - 当前仓库是一个经独立审核的本地 Git 候选仓库，工作内容来自 `D:\工作工具\focus-task-client` 的 Windows 客户端快照 `2e1b6114cee5c3b9f1c1ff4fcd57ee9c656e27e6`。
 - 旧项目的提交图、tag、`legacy-origin`、服务端源码、Docker/Compose、SQLite 数据、数据卷归档、镜像 tar 和凭证均不在本仓库可达历史或索引中。
 - 本仓库只面向 Windows 11。Vue/Tauri 客户端固定访问 `http://127.0.0.1:18765`；任务和账户等业务数据以本机服务 API 为唯一来源。
-- clean root commit 是 `55253fbd99db0ef069fd6ffaeede4c053df5547e`，审核对象为 `5bb37999f33a532176cca426e23b878550f6cd1`；新仓库尚未推送、未打 tag、未创建 Release。详见 [clean-history 任务记录](task-records/2026-07-28-codex-client-clean-history.md)。
+- clean root commit 是 `55253fbd99db0ef069fd6ffaeede4c053df5547e`，独立审核对象为 `0b70708964444e0ce6c5b97f9ea1419f8806aa52`；2026-07-28 已在用户书面授权下将干净 `main` 推送至 GitHub。未打 tag、未创建 Release。详见 [clean-history 任务记录](task-records/2026-07-28-codex-client-clean-history.md)。
 
 ## 当前客户端能力
 
@@ -40,7 +40,7 @@
 |---|---|---|
 | P0 | 旧桌面数据兼容。 | 客户端不会迁移、覆盖、备份或删除旧数据。服务端导入和 bootstrap 防护已在受控本地 `.7`/r13 交付中独立复核并运行时证明，保留 3 用户、18 任务和 61 快照；正式服务器部署仍受服务端 P1 密钥挂载改造约束。 |
 | P1 | 新客户端与本地服务的 API 契约尚需端到端验收。 | 任何服务镜像、认证、附件或数据迁移变化都要在两个仓库建立对应任务记录并联调。 |
-| P1 | clean-history 已通过独立审核，但目标 GitHub remote 仍含旧全栈 refs。 | 服务 P0 已关闭且客户端可执行文件完成启动冒烟；本地 clean `main` 已就绪。用户必须明确授权清理/重建 `Buddha-like-li/focus-task` 的旧 refs，或提供新的空仓库，之后集成人才可推送源码。 |
+| P1 | GitHub remote 仍有一个旧全栈默认分支。 | 用户已书面授权远程清理；干净 `main` 已强制推送，12 个非默认旧分支已删除。当前命令行账号仅有 push 权限，不能把默认分支从 `feat/phase5-subtasks-bugs-prd` 切为 `main`，因此该旧默认分支仍可达。仓库管理员完成切换并删除该分支后才算客户端-only remote。 |
 | P1 | GitHub updater 需要可用的现有签名私钥及其密码。 | 不得把私钥或密码写入工作树、Git 历史、镜像或日志；仅由集成人在 GitHub repository secrets 配置。 |
 | P1 | 本地 NSIS bundle 未生成 `.sig`。 | 私钥密码不可用时，不能验证 updater/tag Release；本地安装包验收不受影响。 |
 | P2 | `frontend.log` 还没有容量上限或轮转策略。 | 建立独立客户端修复任务后处理，并在功能总账更新结论。 |
@@ -49,5 +49,5 @@
 
 - 当前版本源文件仍标记为 `2.3.3`，这仅是来源快照的应用版本，不表示本 clean-history 仓库已发布 `v2.3.3`。
 - 任何下一次 tag 必须在集成人确认版本、签名配置、独立审核和客户端/服务联调后创建；当前签名私钥密码不可用，不能创建 updater Release。
-- 当前 remote 中的旧 `main` 和历史功能分支不满足客户端-only 边界；未获得明确的远程清理或新空仓库授权前，不推送本地 clean history。
+- 远程 `main` 已是干净客户端 history；GitHub 仍以旧 `feat/phase5-subtasks-bugs-prd` 作为默认分支。管理员须先切换默认分支到 `main`，再删除旧分支；在此之前不创建 tag 或 Release。
 - 服务镜像和可选数据卷归档均由服务仓库交付；它们永远不是本客户端 GitHub Release 的资产。

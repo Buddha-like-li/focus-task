@@ -28,7 +28,7 @@
 
 - 本地 NSIS 构建不等同于可发布 updater。正式 tag 必须有匹配现有公钥的 `TAURI_SIGNING_PRIVATE_KEY` 与密码，并由 CI 产生签名、canonical Windows 资产和 `latest.json`。
 - 私钥、密码、GitHub token、服务凭证、镜像 tar 和数据卷 tar 不得进入工作树、索引、提交、Release 附件或日志。
-- 当前 clean-history 候选尚未独立审核，禁止推送、tag 或 Release。
+- clean-history 已完成独立审核并已在用户书面授权下推送源码；GitHub 仍有一个旧全栈默认分支，管理员完成默认分支切换和删除前禁止创建 tag 或 Release。
 
 ## P2
 

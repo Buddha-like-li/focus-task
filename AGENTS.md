@@ -12,9 +12,9 @@
 
 ## 当前仓库状态
 
-- 本仓库是从 `D:\工作工具\focus-task-client` 的已审核 Windows 客户端快照重建的独立候选仓库；旧仓库提交历史、`legacy-origin` 和服务端历史均不在本仓库可达历史中。
-- 当前候选分支是 `codex/client-clean-history`。在独立审核通过且集成人书面批准前，不得合入、打 tag、创建 Release 或推送远程。
-- `origin` 只允许指向 `git@github.com:Buddha-like-li/focus-task.git`；不得配置或使用 `legacy-origin`。
+- 本仓库是从 `D:\工作工具\focus-task-client` 的已审核 Windows 客户端快照重建的独立仓库；旧仓库提交历史、`legacy-origin` 和服务端历史均不在本仓库可达历史中。
+- 当前集成分支是 `main`。2026-07-28 已完成独立审核并由集成人获得用户书面授权后推送源码；未打 tag、未创建 Release。
+- `origin` 只允许指向 `git@github.com:Buddha-like-li/focus-task.git`；不得配置或使用 `legacy-origin`。远程旧默认分支的最终清理仍需要仓库管理员操作，详见功能总账和 clean-history 任务记录。
 
 ## 必须遵守的改动流程
 

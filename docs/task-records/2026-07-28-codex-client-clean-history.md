@@ -61,3 +61,20 @@
 - **P1：签名私钥和任何服务测试账号均不得进入本仓库。** GitHub secrets 和服务运行时配置由集成人/运维单独管理。
 - **P1：本地 NSIS 构建没有 `.sig`。** 私钥密码不可用时，不得把它作为
   GitHub updater/tag Release 的签名验证证据；这不影响本地安装包验收。
+
+## 集成与远程切换（2026-07-28）
+
+- 集成人：`/root`；用户以书面形式授权删除/重建
+  `Buddha-like-li/focus-task` 的旧远程 refs 后推送本地干净 `main`。
+- 审核者 `/root/client_clean_repo_reviewer` 对审核对象
+  `0b70708964444e0ce6c5b97f9ea1419f8806aa52` 进行了独立只读复核；未产生审核提交。
+  结论：通过，未发现新增 P0。复核内容包括可达历史、索引边界、远程配置、
+  25/25 前端测试、production build、`cargo fmt --check`、`git diff --check`、
+  NSIS 构建和桌面启动冒烟。
+- 集成人以 `git push --force origin main:main` 成功将远程 `main` 替换为上述干净
+  history；未创建 tag、Release 或发布资产。
+- 集成人随后删除了 12 个非默认历史分支。`feat/phase5-subtasks-bugs-prd` 仍是
+  GitHub 默认分支，不能由只有 push 权限的 `tangxing7028` 删除。仓库管理员必须
+  先将默认分支切换为 `main`，然后删除该最后的旧分支并记录结果。
+- P1 发布延期：签名私钥密码不可用，且远程仍有旧默认分支；这两项均阻止 updater
+  tag/Release，但不阻止已完成的客户端源码推送和本地 NSIS 安装包使用。
