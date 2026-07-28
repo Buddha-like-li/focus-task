@@ -67,10 +67,10 @@
 - 集成人：`/root`；用户以书面形式授权删除/重建
   `Buddha-like-li/focus-task` 的旧远程 refs 后推送本地干净 `main`。
 - 审核者 `/root/client_clean_repo_reviewer` 对审核对象
-  `0b70708964444e0ce6c5b97f9ea1419f8806aa52` 进行了独立只读复核；未产生审核提交。
+  `5bb37999f33a532176cca426e23b878550f6cd1` 进行了独立只读复核；未产生审核提交。
   结论：通过，未发现新增 P0。复核内容包括可达历史、索引边界、远程配置、
   25/25 前端测试、production build、`cargo fmt --check`、`git diff --check`、
-  NSIS 构建和桌面启动冒烟。
+  NSIS 构建。
 - 集成人以 `git push --force origin main:main` 成功将远程 `main` 替换为上述干净
   history；未创建 tag、Release 或发布资产。
 - 集成人随后删除了 12 个非默认历史分支。`feat/phase5-subtasks-bugs-prd` 仍是

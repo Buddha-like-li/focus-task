@@ -41,7 +41,7 @@ bash scripts/bump-version.sh patch
 
 | Secret 名称 | 应填写的值 | 说明 |
 |---|---|---|
-| `TAURI_SIGNING_PRIVATE_KEY` | `C:\Users\wangm\.tauri\focus-task.key` 的完整原始文本 | 填入文件内容，不是文件路径，不加引号；必须沿用现有 updater 公钥对应的私钥。 |
+| `TAURI_SIGNING_PRIVATE_KEY` | `%USERPROFILE%\.tauri\focus-task.key` 的完整原始文本 | 填入文件内容，不是文件路径，不加引号；必须沿用现有 updater 公钥对应的私钥。 |
 | `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | 创建该私钥时使用的原始密码 | 不是 Windows 登录密码、GitHub token 或私钥文件路径。私钥未设置密码时不创建此 secret；密码未知时不得猜测或新建密码。 |
 
 私钥和密码绝不能写入 Git、任务记录、镜像、日志或 Release 附件。若原密码无法找回，

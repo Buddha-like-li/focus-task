@@ -7,7 +7,7 @@
 - 当前仓库是一个经独立审核的本地 Git 候选仓库，工作内容来自 `D:\工作工具\focus-task-client` 的 Windows 客户端快照 `2e1b6114cee5c3b9f1c1ff4fcd57ee9c656e27e6`。
 - 旧项目的提交图、tag、`legacy-origin`、服务端源码、Docker/Compose、SQLite 数据、数据卷归档、镜像 tar 和凭证均不在本仓库可达历史或索引中。
 - 本仓库只面向 Windows 11。Vue/Tauri 客户端固定访问 `http://127.0.0.1:18765`；任务和账户等业务数据以本机服务 API 为唯一来源。
-- clean root commit 是 `55253fbd99db0ef069fd6ffaeede4c053df5547e`，独立审核对象为 `0b70708964444e0ce6c5b97f9ea1419f8806aa52`；2026-07-28 已在用户书面授权下将干净 `main` 推送至 GitHub。未打 tag、未创建 Release。详见 [clean-history 任务记录](task-records/2026-07-28-codex-client-clean-history.md)。
+- clean root commit 是 `55253fbd99db0ef069fd6ffaeede4c053df5547e`，独立审核对象为 `5bb37999f33a532176cca426e23b878550f6cd1`；2026-07-28 已在用户书面授权下将干净 `main` 推送至 GitHub。未打 tag、未创建 Release。详见 [clean-history 任务记录](task-records/2026-07-28-codex-client-clean-history.md)。
 
 ## 当前客户端能力
 
