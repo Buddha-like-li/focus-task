@@ -15,7 +15,7 @@ vi.mock('@/utils/reportFileActions', () => ({
 }))
 
 import * as api from '@/api'
-import { saveReportMarkdownFile } from '@/utils/reportFileActions'
+import { reportExportFilename, saveReportMarkdownFile } from '@/utils/reportFileActions'
 import ReportsView from './ReportsView.vue'
 
 const markdownFile = {
@@ -101,6 +101,23 @@ describe('ReportsView file actions', () => {
       )
     })
     expect(JSON.stringify(vi.mocked(saveReportMarkdownFile).mock.calls)).not.toContain(markdownFile.exportPath)
+  })
+
+  it('saves and reveals an exported report through the local file action', async () => {
+    document.querySelector<HTMLButtonElement>('.docs-btn')!.click()
+    await vi.waitFor(() => {
+      expect(document.querySelector<HTMLButtonElement>('.docs-btn-ghost')).not.toBeNull()
+    })
+
+    document.querySelector<HTMLButtonElement>('.docs-btn-ghost')!.click()
+    await vi.waitFor(() => {
+      expect(reportExportFilename).toHaveBeenCalledWith('monthly', '2026-07', '月报.md')
+      expect(saveReportMarkdownFile).toHaveBeenCalledWith(
+        'monthly-2026-07-月报.md',
+        '# 月报',
+        { reveal: true },
+      )
+    })
   })
 
   it('prevents duplicate report downloads while a save is pending', async () => {

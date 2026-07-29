@@ -832,7 +832,9 @@ function showTooltip(event: MouseEvent | FocusEvent, date: string) {
 
   const rect = container.getBoundingClientRect()
   const targetRect = target.getBoundingClientRect()
-  tooltip.x = targetRect.left - rect.left - 24
+  // 钳制提示框横坐标，避免两侧日期柱的内容被图表容器裁切。
+  const rawX = targetRect.left - rect.left - 24
+  tooltip.x = Math.min(Math.max(rawX, 8), Math.max(rect.width - 164, 8))
   tooltip.y = Math.max(targetRect.top - rect.top - 96, 8)
   tooltip.date = formatBarDate(date)
   tooltip.total = data.total
@@ -1141,7 +1143,7 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  margin-bottom: 18px;
+  /* 底部留白由 .reports-page 的 52px padding 统一承担。 */
 }
 
 .doc-row {
@@ -1298,11 +1300,16 @@ onUnmounted(() => {
   font-size: 16px;
   font-weight: 650;
   color: var(--text-primary);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .md-preview-close {
   width: 30px;
   height: 30px;
+  flex-shrink: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1440,7 +1447,7 @@ onUnmounted(() => {
 }
 
 .date-input {
-  width: 136px;
+  min-width: 150px;
   height: 34px;
   padding: 0 10px;
   border: 1px solid var(--border-subtle);
@@ -1527,7 +1534,7 @@ onUnmounted(() => {
   grid-template-columns: minmax(0, 1.35fr) minmax(280px, 0.75fr);
   gap: 14px;
   min-height: 220px;
-  margin-bottom: 18px;
+  /* 底部留白由 .reports-page 的 52px padding 统一承担。 */
 }
 
 .chart-panel,
@@ -1663,9 +1670,13 @@ onUnmounted(() => {
   top: 6px;
   bottom: 6px;
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(48px, 1fr));
+  /* 日期过多时维持单行并允许横向查看，避免隐式换行后被裁切。 */
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(48px, 1fr);
   gap: 10px;
   align-items: end;
+  overflow-x: auto;
+  overflow-y: hidden;
 }
 
 .chart-bar-group {
