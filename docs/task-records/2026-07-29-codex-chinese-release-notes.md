@@ -72,3 +72,8 @@
 
 - 集成人已将既有 `v2.3.5` 的 GitHub Release 标题和正文替换为 `docs/release-notes/v2.3.5.md` 中的中文说明，并将其 `latest.json` 的 `notes` 替换为同一内容。
 - 远程复核确认更新清单版本仍为 `2.3.5`，且 Windows 安装包地址仍指向原有 `Focus.Task_2.3.5_x64-setup.exe`；未替换安装包、签名或 tag。
+
+### 发布执行
+
+- `main` 已推送至 `d903eda67660cd081399e39263f602b540be8d19`，带注释 tag `v2.3.6` 已推送并指向该提交。
+- 按用户要求，tag 推送成功后不等待 GitHub Actions 完成。CI 成功前不得宣称 `v2.3.6` 的签名安装包、签名文件和公开 Release 已可用；任一失败均须在新的独立分支修复并复核。
