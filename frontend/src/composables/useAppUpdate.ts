@@ -221,9 +221,8 @@ function trackDownloadProgress(event: DownloadEvent, state: { contentLength?: nu
 }
 
 /**
- * Download and install the available update. On success the app relaunches
- * automatically (via ``@tauri-apps/plugin-process``), so this Promise is
- * expected to never resolve in the happy path.
+ * Download and install the available update, then explicitly relaunch the
+ * application through ``@tauri-apps/plugin-process`` on success.
  */
 function downloadAndInstall(): Promise<void> {
   if (inFlightInstall) return inFlightInstall
@@ -275,8 +274,7 @@ async function performDownloadAndInstall(): Promise<void> {
     releaseUpdate(update)
     releasedConsumedUpdate = true
     appLogger.info('[update] install complete, relaunching', undefined, { persist: true })
-    // downloadAndInstall triggers relaunch on completion - the call below
-    // is a fallback if the platform doesn't auto-relaunch.
+    // The updater installs the package; the application restart is explicit.
     await relaunch()
   } catch (err) {
     const failedPhase = installPhase.value
