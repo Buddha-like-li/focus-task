@@ -364,6 +364,11 @@ export async function deleteRequirement(id: number): Promise<void> {
   return request('DELETE', `/api/requirements/${id}`)
 }
 
+/** 由服务端原子地将需求转换为四象限任务。 */
+export async function promoteRequirement(requirementId: number, quadrant: number): Promise<Task> {
+  return request('POST', `/api/requirements/${requirementId}/promote`, { quadrant })
+}
+
 export async function listRequirementAttachments(requirementId: number): Promise<TaskAttachment[]> {
   const response = await attachmentRequest(`/api/requirements/${requirementId}/attachments`)
   return toCamel(await response.json())

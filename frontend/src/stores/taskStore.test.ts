@@ -60,4 +60,24 @@ describe('taskStore task belonging normalization', () => {
 
     expect(taskStore.tasks[0]?.taskBelonging).toBe('客户专项')
   })
+
+  it('writes or refreshes a task returned by a service workflow', () => {
+    const taskStore = useTaskStore()
+    const created = taskStore.upsertServerTask(makeServerTask({
+      clientId: 'promoted-task',
+      title: '已转换任务',
+      quadrant: 3,
+      taskBelonging: '  客户专项  ',
+    }))
+
+    taskStore.upsertServerTask({ ...created, title: '已转换任务（更新）' })
+
+    expect(taskStore.tasks).toHaveLength(1)
+    expect(taskStore.tasks[0]).toMatchObject({
+      clientId: 'promoted-task',
+      title: '已转换任务（更新）',
+      quadrant: 3,
+      taskBelonging: '客户专项',
+    })
+  })
 })

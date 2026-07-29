@@ -5,9 +5,11 @@ import {
   createRequirement,
   updateRequirement,
   deleteRequirement,
+  promoteRequirement,
   type Requirement,
   type RequirementInput,
 } from '@/api'
+import type { Task } from '@/stores/taskStore'
 
 /**
  * 需求池 store（P2-4）。
@@ -60,6 +62,15 @@ export const useRequirementStore = defineStore('requirements', () => {
     requirements.value = requirements.value.filter(item => item.id !== id)
   }
 
+  /** 服务端负责转换事务；仅在当前账号会话仍有效时更新本地需求池。 */
+  async function promoteToTask(id: number, quadrant: number): Promise<Task | null> {
+    const requestRevision = sessionRevision
+    const task = await promoteRequirement(id, quadrant)
+    if (!isCurrentSession(requestRevision)) return null
+    requirements.value = requirements.value.filter(item => item.id !== id)
+    return task
+  }
+
   /** Remove requirements from the prior account before another user signs in. */
   function clearSessionState() {
     sessionRevision += 1
@@ -72,5 +83,5 @@ export const useRequirementStore = defineStore('requirements', () => {
     return requestRevision === sessionRevision
   }
 
-  return { requirements, loading, error, fetchAll, add, update, remove, clearSessionState }
+  return { requirements, loading, error, fetchAll, add, update, remove, promoteToTask, clearSessionState }
 })

@@ -95,6 +95,16 @@ export const useTaskStore = defineStore('tasks', () => {
     }
   }
 
+  /** 写入或刷新服务端工作流返回的单个任务。 */
+  function upsertServerTask(serverTask: Task): Task {
+    const normalized = normalizeTask(serverTask)
+    const index = tasks.value.findIndex(task => task.clientId === normalized.clientId)
+    if (index === -1) tasks.value.unshift(normalized)
+    else tasks.value.splice(index, 1, normalized)
+    serviceError.value = ''
+    return normalized
+  }
+
   /** Remove account-specific task data before another user signs in. */
   function clearSessionState() {
     sessionRevision += 1
@@ -286,6 +296,7 @@ export const useTaskStore = defineStore('tasks', () => {
     filterQuadrant,
     replaceServerTasks,
     clearSessionState,
+    upsertServerTask,
     fetchTasks,
     addTask,
     updateTask,

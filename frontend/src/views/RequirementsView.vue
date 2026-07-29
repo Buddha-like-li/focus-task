@@ -62,7 +62,14 @@
         <div class="req-card-side">
           <span class="req-badge" :style="statusStyle(req.status)">{{ req.status }}</span>
           <span class="req-badge" :style="priorityStyle(req.priority)">{{ req.priority }}</span>
-          <button class="req-delete" title="删除需求" @click.stop="confirmDelete(req)">×</button>
+          <button
+            type="button"
+            class="req-promote"
+            :disabled="promoting"
+            title="转为四象限任务"
+            @click.stop="openPromote(req)"
+          >转为任务</button>
+          <button type="button" class="req-delete" title="删除需求" :disabled="promoting" @click.stop="confirmDelete(req)">×</button>
         </div>
       </article>
     </section>
@@ -138,6 +145,40 @@
         </template>
       </n-card>
     </n-modal>
+
+    <!-- 服务端负责转换事务，客户端只选择目标象限。 -->
+    <n-modal
+      v-model:show="showPromoteModal"
+      :mask-closable="!promoting"
+      :close-on-esc="!promoting"
+    >
+      <n-card style="max-width: 480px; width: 92vw" title="转为四象限任务" :bordered="false">
+        <div class="req-promote-dialog">
+          <p>将“{{ promoteTarget?.title || '未命名需求' }}”转为任务，并放入所选象限。</p>
+          <div class="req-promote-options" role="radiogroup" aria-label="选择任务象限">
+            <label v-for="option in PROMOTE_QUADRANTS" :key="option.id" class="req-promote-option">
+              <input
+                v-model="promoteQuadrant"
+                type="radio"
+                name="promote-quadrant"
+                :value="option.id"
+                :disabled="promoting"
+              />
+              <span>{{ option.label }}</span>
+            </label>
+          </div>
+          <p v-if="promoteError" class="req-error" role="alert">{{ promoteError }}</p>
+        </div>
+        <template #footer>
+          <div class="req-form-actions">
+            <button type="button" class="secondary-btn" :disabled="promoting" @click="closePromote">取消</button>
+            <button type="button" class="primary-btn req-promote-confirm" :disabled="promoting || !promoteTarget" @click="confirmPromote">
+              {{ promoting ? '转换中…' : '确认转换' }}
+            </button>
+          </div>
+        </template>
+      </n-card>
+    </n-modal>
   </div>
 </template>
 
@@ -161,6 +202,12 @@ const taskStore = useTaskStore()
 
 const STATUS_OPTIONS = ['计划中', '进行中', '已完成', '已搁置']
 const PRIORITY_OPTIONS = ['高', '中', '低']
+const PROMOTE_QUADRANTS = [
+  { id: 1, label: '第一象限：重要且紧急' },
+  { id: 2, label: '第二象限：重要不紧急' },
+  { id: 3, label: '第三象限：紧急不重要' },
+  { id: 4, label: '第四象限：不重要不紧急' },
+]
 
 // ─── Editor state ───
 const showEditor = ref(false)
@@ -220,11 +267,61 @@ async function save() {
 }
 
 async function confirmDelete(req: Requirement) {
+  if (promoting.value) return
   if (!window.confirm(`删除需求「${req.title}」？此操作不可恢复。`)) return
   try {
     await store.remove(req.id)
   } catch (err: any) {
     window.alert(err?.message || '删除失败')
+  }
+}
+
+// ─── 转为四象限任务 ───
+const showPromoteModal = ref(false)
+const promoteTarget = ref<Requirement | null>(null)
+const promoteQuadrant = ref(1)
+const promoting = ref(false)
+const promoteError = ref('')
+
+function openPromote(req: Requirement) {
+  if (promoting.value) return
+  promoteTarget.value = req
+  promoteQuadrant.value = 1
+  promoteError.value = ''
+  showPromoteModal.value = true
+}
+
+function closePromote() {
+  if (promoting.value) return
+  showPromoteModal.value = false
+  promoteTarget.value = null
+  promoteError.value = ''
+}
+
+async function confirmPromote() {
+  const requirement = promoteTarget.value
+  if (!requirement || promoting.value) return
+
+  promoting.value = true
+  promoteError.value = ''
+  let converted = false
+  try {
+    const promotedTask = await store.promoteToTask(requirement.id, promoteQuadrant.value)
+    // Logout or account switching can finish while the request is pending.
+    // The requirement store returns null for that stale response so it cannot
+    // insert account A's task into account B's task workspace.
+    if (!promotedTask) return
+    taskStore.upsertServerTask(promotedTask)
+    taskStore.filterQuadrant = null
+    taskStore.setView('matrix')
+    taskStore.selectTask(promotedTask.clientId)
+    converted = true
+  } catch {
+    // 不展示服务内部信息；需求仅在 API 成功后才会从本地列表移除。
+    promoteError.value = '转换失败，需求仍保留在需求池。请确认本地服务正常后重试。'
+  } finally {
+    promoting.value = false
+    if (converted) closePromote()
   }
 }
 
@@ -434,6 +531,21 @@ function statusBadgeStyle(status?: string) {
   line-height: 1.4;
 }
 .req-delete:hover { background: oklch(94% 0.03 25); color: oklch(48% 0.15 25); }
+.req-delete:disabled { cursor: default; opacity: 0.55; }
+.req-promote {
+  border: 1px solid oklch(72% 0.08 240);
+  background: oklch(97% 0.018 240);
+  color: oklch(42% 0.12 240);
+  border-radius: var(--radius-sm);
+  padding: 4px 8px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.req-promote:hover { border-color: oklch(55% 0.12 240); background: oklch(94% 0.03 240); }
+.req-promote:disabled { cursor: default; opacity: 0.55; }
 
 /* ─── 关联任务（P5-2）─── */
 .req-card-title-row {
@@ -581,6 +693,25 @@ function statusBadgeStyle(status?: string) {
 
 .req-error { color: oklch(58% 0.18 25); font-size: 13px; margin: 0; }
 .req-form-actions { display: flex; justify-content: flex-end; gap: 10px; }
+.req-promote-dialog { display: flex; flex-direction: column; gap: 14px; }
+.req-promote-dialog > p:first-child { margin: 0; color: var(--text-secondary); font-size: 14px; line-height: 1.6; }
+.req-promote-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.req-promote-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--surface-mid);
+  padding: 9px 10px;
+  color: var(--text-primary);
+  font-size: 13px;
+  cursor: pointer;
+}
+.req-promote-option:has(input:checked) { border-color: oklch(55% 0.12 240); background: oklch(96% 0.022 240); }
+.req-promote-option:has(input:disabled) { cursor: default; opacity: 0.65; }
+.req-promote-option input { margin: 0; accent-color: oklch(55% 0.12 240); }
 
 .primary-btn {
   background: oklch(55% 0.12 240);

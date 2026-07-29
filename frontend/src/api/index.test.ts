@@ -22,6 +22,7 @@ import {
   listTasks,
   login,
   onAuthExpired,
+  promoteRequirement,
   setAuthToken,
 } from './index'
 
@@ -110,5 +111,25 @@ describe('API network failures', () => {
     await vi.waitFor(() => {
       expect(expired).toHaveBeenCalledWith({ token: 'token-a', sessionRevision: 11 })
     })
+  })
+
+  it('asks the local service to promote a requirement without creating a client task', async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        id: 12,
+        client_id: 'promoted-task',
+        quadrant: 2,
+        title: '服务端创建的任务',
+      }),
+    })
+
+    const task = await promoteRequirement(7, 2)
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://127.0.0.1:18765/api/requirements/7/promote',
+      expect.objectContaining({ method: 'POST', body: JSON.stringify({ quadrant: 2 }) }),
+    )
+    expect(task).toMatchObject({ clientId: 'promoted-task', quadrant: 2 })
   })
 })
