@@ -19,6 +19,16 @@ struct AuthState {
     username: String,
 }
 
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+struct StoredAuthState {
+    token: String,
+    username: String,
+    // Older installations stored AuthState directly and therefore have no
+    // marker. Missing means committed so those sessions remain readable.
+    #[serde(default)]
+    pending: bool,
+}
+
 #[derive(Serialize, Deserialize)]
 struct NativeNotificationPayload {
     title: String,
@@ -37,13 +47,42 @@ fn read_credential(account: &str) -> Result<Option<String>, String> {
     }
 }
 
-fn deserialize_auth_state(serialized: &str) -> Result<AuthState, String> {
-    let state: AuthState = serde_json::from_str(serialized)
+fn deserialize_stored_auth_state(serialized: &str) -> Result<StoredAuthState, String> {
+    let state: StoredAuthState = serde_json::from_str(serialized)
         .map_err(|_| "Windows Credential Manager 中的登录状态格式无效".to_string())?;
     if state.token.trim().is_empty() {
         return Err("Windows Credential Manager 中的登录令牌为空".to_string());
     }
     Ok(state)
+}
+
+fn serialize_stored_auth_state(state: &AuthState, pending: bool) -> Result<String, String> {
+    serde_json::to_string(&StoredAuthState {
+        token: state.token.clone(),
+        username: state.username.clone(),
+        pending,
+    })
+    .map_err(|_| "无法序列化登录状态".to_string())
+}
+
+fn deserialize_auth_state(serialized: &str) -> Result<AuthState, String> {
+    let state = deserialize_stored_auth_state(serialized)?;
+    if state.pending {
+        return Err("Windows Credential Manager 中的登录状态尚未确认，请重新登录".to_string());
+    }
+    Ok(AuthState {
+        token: state.token,
+        username: state.username,
+    })
+}
+
+fn verify_pending_auth_state(serialized: &str, expected: &AuthState) -> Result<(), String> {
+    let saved = deserialize_stored_auth_state(serialized)?;
+    if saved.pending && saved.token == expected.token && saved.username == expected.username {
+        Ok(())
+    } else {
+        Err("Windows Credential Manager 未保留完整待确认登录状态".to_string())
+    }
 }
 
 fn clear_accounts<F>(accounts: &[&str], mut delete: F) -> Result<(), String>
@@ -125,15 +164,72 @@ fn load_legacy_auth_state() -> Result<Option<AuthState>, String> {
     }
 }
 
-#[tauri::command]
-fn load_auth_state() -> Result<Option<AuthState>, String> {
-    if let Some(serialized) = read_credential(AUTH_STATE_ACCOUNT)? {
+fn load_auth_state_with<R, L>(mut read: R, load_legacy: L) -> Result<Option<AuthState>, String>
+where
+    R: FnMut(&str) -> Result<Option<String>, String>,
+    L: FnOnce() -> Result<Option<AuthState>, String>,
+{
+    if let Some(serialized) = read(AUTH_STATE_ACCOUNT)? {
+        // A pending record is deliberately an error rather than a signal to
+        // fall back to legacy credentials. That prevents a failed save from
+        // reviving either the new token or an older account at next startup.
         return deserialize_auth_state(&serialized).map(Some);
     }
 
-    // Existing installations used two credential records. Read them only
-    // when the new atomic record is absent; logout clears all three records.
-    load_legacy_auth_state()
+    load_legacy()
+}
+
+#[tauri::command]
+fn load_auth_state() -> Result<Option<AuthState>, String> {
+    load_auth_state_with(read_credential, load_legacy_auth_state)
+}
+
+fn save_auth_state_with<W, R, D>(
+    state: &AuthState,
+    mut write: W,
+    mut read: R,
+    mut delete: D,
+) -> Result<(), String>
+where
+    W: FnMut(&str) -> Result<(), String>,
+    R: FnMut() -> Result<Option<String>, String>,
+    D: FnMut(&str) -> Result<(), String>,
+{
+    let save_result = (|| {
+        let pending = serialize_stored_auth_state(state, true)?;
+        write(&pending)?;
+
+        match read()? {
+            Some(saved) => verify_pending_auth_state(&saved, state)?,
+            None => {
+                return Err("Windows Credential Manager 未保留待确认登录状态".to_string());
+            }
+        }
+
+        // This second successful keyring write is the commit. Do not add a
+        // post-commit read that could report failure after an active record
+        // already exists; any earlier failure leaves only a pending record,
+        // which load_auth_state deliberately rejects.
+        let committed = serialize_stored_auth_state(state, false)?;
+        write(&committed)
+    })();
+
+    if let Err(error) = save_result {
+        // Cleanup is only best effort. The pending marker above is the
+        // fail-closed guarantee when Windows refuses to delete the record.
+        return match cleanup_failed_auth_save(|account| delete(account)) {
+            Ok(()) => Err(error),
+            Err(cleanup_error) => Err(format!("{error}；清理失败：{cleanup_error}")),
+        };
+    }
+
+    Ok(())
+}
+
+fn write_auth_state_credential(serialized: &str) -> Result<(), String> {
+    keyring_entry(AUTH_STATE_ACCOUNT)?
+        .set_password(serialized)
+        .map_err(|err| err.to_string())
 }
 
 #[tauri::command]
@@ -142,37 +238,15 @@ fn save_auth_state(state: AuthState) -> Result<(), String> {
         return Err("拒绝保存空登录令牌".to_string());
     }
 
-    let save_result = (|| {
-        let serialized =
-            serde_json::to_string(&state).map_err(|_| "无法序列化登录状态".to_string())?;
-        keyring_entry(AUTH_STATE_ACCOUNT)?
-            .set_password(&serialized)
-            .map_err(|err| err.to_string())?;
-
-        match read_credential(AUTH_STATE_ACCOUNT)? {
-            Some(saved) => {
-                if deserialize_auth_state(&saved)? == state {
-                    Ok(())
-                } else {
-                    Err("Windows Credential Manager 未保留完整登录状态".to_string())
-                }
-            }
-            None => Err("Windows Credential Manager 未保留登录状态".to_string()),
-        }
-    })();
-
-    if let Err(error) = save_result {
-        // A failed write must not leave any recoverable session. This cleanup
-        // intentionally differs from manual logout and removes auth_state
-        // before attempting the legacy records.
-        return match cleanup_failed_auth_save(delete_credential) {
-            Ok(()) => Err(error),
-            Err(cleanup_error) => Err(format!("{error}；清理失败：{cleanup_error}")),
-        };
-    }
+    save_auth_state_with(
+        &state,
+        write_auth_state_credential,
+        || read_credential(AUTH_STATE_ACCOUNT),
+        delete_credential,
+    )?;
 
     // The new record contains token and username atomically. Legacy cleanup is
-    // best effort after a verified save; later logout starts with both legacy
+    // best effort after a committed save; later logout starts with both legacy
     // records and deliberately preserves auth_state if that cleanup is incomplete.
     let _ = clear_legacy_auth_state();
     Ok(())
@@ -491,18 +565,143 @@ mod report_export_tests {
 #[cfg(test)]
 mod auth_state_tests {
     use super::*;
+    use std::cell::RefCell;
+    use std::rc::Rc;
 
     #[test]
-    fn serialized_auth_state_round_trips_without_a_password() {
+    fn committed_auth_state_round_trips_while_pending_state_is_rejected() {
         let expected = AuthState {
             token: "service-jwt".to_string(),
             username: "alice".to_string(),
         };
 
-        let serialized = serde_json::to_string(&expected).unwrap();
-        assert_eq!(deserialize_auth_state(&serialized).unwrap(), expected);
+        let legacy_serialized = serde_json::to_string(&expected).unwrap();
+        assert_eq!(
+            deserialize_auth_state(&legacy_serialized).unwrap(),
+            expected
+        );
+
+        let committed = serialize_stored_auth_state(&expected, false).unwrap();
+        assert_eq!(deserialize_auth_state(&committed).unwrap(), expected);
+
+        let pending = serialize_stored_auth_state(&expected, true).unwrap();
+        let pending_error = deserialize_auth_state(&pending).unwrap_err();
+        assert!(pending_error.contains("尚未确认"));
+
         assert!(deserialize_auth_state("not-json").is_err());
         assert!(deserialize_auth_state(r#"{"token":"","username":"alice"}"#).is_err());
+    }
+
+    #[test]
+    fn verified_pending_state_commits_without_a_post_commit_read() {
+        let expected = AuthState {
+            token: "service-jwt".to_string(),
+            username: "alice".to_string(),
+        };
+        let stored = Rc::new(RefCell::new(None::<String>));
+        let writes = Rc::new(RefCell::new(Vec::<String>::new()));
+
+        save_auth_state_with(
+            &expected,
+            {
+                let stored = Rc::clone(&stored);
+                let writes = Rc::clone(&writes);
+                move |serialized| {
+                    writes.borrow_mut().push(serialized.to_string());
+                    *stored.borrow_mut() = Some(serialized.to_string());
+                    Ok(())
+                }
+            },
+            {
+                let stored = Rc::clone(&stored);
+                move || Ok(stored.borrow().clone())
+            },
+            |_| Ok(()),
+        )
+        .unwrap();
+
+        assert_eq!(writes.borrow().len(), 2);
+        assert!(
+            deserialize_stored_auth_state(&writes.borrow()[0])
+                .unwrap()
+                .pending
+        );
+        assert!(
+            !deserialize_stored_auth_state(&writes.borrow()[1])
+                .unwrap()
+                .pending
+        );
+        assert_eq!(
+            load_auth_state_with(
+                {
+                    let stored = Rc::clone(&stored);
+                    move |_| Ok(stored.borrow().clone())
+                },
+                || Ok(None),
+            )
+            .unwrap(),
+            Some(expected)
+        );
+    }
+
+    #[test]
+    fn failed_pending_save_is_rejected_after_auth_state_delete_failure_and_restart() {
+        let new_state = AuthState {
+            token: "new-service-jwt".to_string(),
+            username: "bob".to_string(),
+        };
+        let stored = Rc::new(RefCell::new(None::<String>));
+        let deleted = Rc::new(RefCell::new(Vec::<String>::new()));
+
+        let error = save_auth_state_with(
+            &new_state,
+            {
+                let stored = Rc::clone(&stored);
+                move |serialized| {
+                    *stored.borrow_mut() = Some(serialized.to_string());
+                    Ok(())
+                }
+            },
+            || Err("simulated readback failure".to_string()),
+            {
+                let deleted = Rc::clone(&deleted);
+                move |account| {
+                    deleted.borrow_mut().push(account.to_string());
+                    if account == AUTH_STATE_ACCOUNT {
+                        Err("simulated auth_state delete failure".to_string())
+                    } else {
+                        Ok(())
+                    }
+                }
+            },
+        )
+        .unwrap_err();
+
+        assert!(error.contains("simulated readback failure"));
+        assert!(error.contains("simulated auth_state delete failure"));
+        assert_eq!(
+            *deleted.borrow(),
+            vec![
+                AUTH_STATE_ACCOUNT.to_string(),
+                LEGACY_TOKEN_ACCOUNT.to_string(),
+                LEGACY_USERNAME_ACCOUNT.to_string(),
+            ]
+        );
+        let pending = stored.borrow().clone().unwrap();
+        assert!(deserialize_stored_auth_state(&pending).unwrap().pending);
+
+        let restart_error = load_auth_state_with(
+            {
+                let stored = Rc::clone(&stored);
+                move |account| {
+                    assert_eq!(account, AUTH_STATE_ACCOUNT);
+                    Ok(stored.borrow().clone())
+                }
+            },
+            || panic!("pending auth_state must not fall back to legacy credentials"),
+        )
+        .unwrap_err();
+        assert!(restart_error.contains("尚未确认"));
     }
 
     #[test]
