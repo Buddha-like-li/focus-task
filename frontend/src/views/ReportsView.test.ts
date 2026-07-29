@@ -128,4 +128,35 @@ describe('ReportsView file actions', () => {
       expect(downloadButton.disabled).toBe(false)
     })
   })
+
+  it('prevents duplicate save-and-reveal clicks while the first save is pending', async () => {
+    await vi.waitFor(() => {
+      expect(
+        document.querySelector<HTMLButtonElement>(
+          'button[aria-label="保存并打开任务文档所在文件夹"]',
+        ),
+      ).not.toBeNull()
+    })
+
+    let releaseSave!: (destination: 'desktop') => void
+    vi.mocked(saveReportMarkdownFile).mockImplementationOnce(
+      () => new Promise<'desktop'>(resolve => { releaseSave = resolve }),
+    )
+
+    const revealButton = document.querySelector<HTMLButtonElement>(
+      'button[aria-label="保存并打开任务文档所在文件夹"]',
+    )!
+    revealButton.click()
+    revealButton.click()
+
+    await vi.waitFor(() => {
+      expect(saveReportMarkdownFile).toHaveBeenCalledTimes(1)
+      expect(revealButton.disabled).toBe(true)
+    })
+
+    releaseSave('desktop')
+    await vi.waitFor(() => {
+      expect(revealButton.disabled).toBe(false)
+    })
+  })
 })

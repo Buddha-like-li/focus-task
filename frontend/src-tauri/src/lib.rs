@@ -193,7 +193,28 @@ fn write_report_markdown(
         .parent()
         .ok_or_else(|| "导出文件路径无效".to_string())?;
     fs::create_dir_all(parent).map_err(|err| format!("无法创建报告导出目录：{err}"))?;
-    fs::write(&output, markdown.as_bytes()).map_err(|err| format!("无法保存报告文件：{err}"))?;
+
+    // The folder action can be triggered more than once. `create_new` makes
+    // the first writer win without a check-then-write race, so a user-edited
+    // Markdown file is never replaced by a later report snapshot.
+    let mut file = match OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&output)
+    {
+        Ok(file) => file,
+        Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
+            let metadata = fs::symlink_metadata(&output)
+                .map_err(|metadata_err| format!("无法检查已有报告文件：{metadata_err}"))?;
+            if metadata.file_type().is_file() {
+                return Ok(output);
+            }
+            return Err("报告文件路径已被非普通文件占用，无法保存。".to_string());
+        }
+        Err(err) => return Err(format!("无法保存报告文件：{err}")),
+    };
+    file.write_all(markdown.as_bytes())
+        .map_err(|err| format!("无法保存报告文件：{err}"))?;
     Ok(output)
 }
 
@@ -347,6 +368,42 @@ mod report_export_tests {
         let output = write_report_markdown(&root, "task-42.md", "# report").unwrap();
         assert!(output.starts_with(report_export_directory(&root)));
         assert_eq!(fs::read_to_string(&output).unwrap(), "# report");
+
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn existing_user_report_file_is_revealed_without_being_overwritten() {
+        let root = std::env::temp_dir().join(format!(
+            "focus-task-report-preserve-test-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        let output = report_output_path(&root, "task-42.md").unwrap();
+        fs::create_dir_all(output.parent().unwrap()).unwrap();
+        fs::write(&output, "# 用户手工编辑").unwrap();
+
+        let returned = write_report_markdown(&root, "task-42.md", "# 服务快照").unwrap();
+
+        assert_eq!(returned, output);
+        assert_eq!(fs::read_to_string(&output).unwrap(), "# 用户手工编辑");
+
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn repeated_report_saves_keep_the_first_created_markdown() {
+        let root = std::env::temp_dir().join(format!(
+            "focus-task-report-repeat-save-test-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+
+        let first = write_report_markdown(&root, "task-42.md", "# 首次保存").unwrap();
+        let second = write_report_markdown(&root, "task-42.md", "# 重复保存").unwrap();
+
+        assert_eq!(first, second);
+        assert_eq!(fs::read_to_string(&first).unwrap(), "# 首次保存");
 
         fs::remove_dir_all(&root).unwrap();
     }
