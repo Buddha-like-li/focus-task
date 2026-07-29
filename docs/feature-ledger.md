@@ -33,7 +33,7 @@
 - 来源工作树在建立本仓库前无未提交改动，来源 SHA 为 `2e1b611`。
 - 来源工作树的已记录客户端验证包括 `npm test -- --run`（25 项）、`npm run build`、`cargo fmt --check` 与 `git diff --check`；真实 NSIS 安装包已在 Windows 构建环境产生。
 - clean-history 已完成独立索引边界扫描、Git 历史/remote 核对和客户端代码审核：25 项前端测试、production build、Rust format check、diff check 和实际 NSIS bundle 均通过。NSIS SHA-256 为 `D9F18F8D2D38112E06FFAE6FB9B23F7EB790F28FA5628F00274E88405654BF7E`。
-- 2026-07-29 已核对 GitHub remote：仅有 `refs/heads/main`，指向 `4bce7d7cdca535ec8c33622f2371b0ce56314f1e`；无 tag、无 Release。旧全栈 refs 不再可达。
+- 2026-07-29 已核对 GitHub remote：仅有 `refs/heads/main`；无 tag、无 Release。旧全栈 refs 不再可达。
 
 ## 已知风险与门禁
 
