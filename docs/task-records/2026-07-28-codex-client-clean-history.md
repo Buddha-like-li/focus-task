@@ -54,13 +54,14 @@
 ## 风险与发布门禁
 
 - **P0：旧数据兼容只在受控本地服务交付中完成。** 服务端导入卷 bootstrap 防护已独立复核并在 `.7` 运行时证明关闭；客户端仍不会直接碰触旧数据。正式服务器部署仍受服务端 P1 密钥挂载改造约束。
-- **P1：目标 GitHub remote 仍含旧全栈 refs。** 集成人核查
-  `Buddha-like-li/focus-task` 后发现旧 `main` 与多个历史功能分支仍可达。
-  在用户明确授权删除/重建这些 refs，或提供全新的空客户端仓库前，禁止推送
-  clean `main`，否则 GitHub 仍会保存服务端历史。
+- **已解决：目标 GitHub remote 曾含旧全栈 refs。** 2026-07-29 仓库所有者将默认
+  分支切换到干净 `main` 后，集成人删除最后的
+  `feat/phase5-subtasks-bugs-prd`。最终核对只剩 `refs/heads/main`，无 tag、无
+  Release；旧服务端历史不再由该 GitHub remote 的 branch refs 可达。
 - **P1：签名私钥和任何服务测试账号均不得进入本仓库。** GitHub secrets 和服务运行时配置由集成人/运维单独管理。
-- **P1：本地 NSIS 构建没有 `.sig`。** 私钥密码不可用时，不得把它作为
-  GitHub updater/tag Release 的签名验证证据；这不影响本地安装包验收。
+- **P1：本地 NSIS 构建没有 `.sig`。** 私钥未加密码时无需 password secret；无论是否
+  加密，尚未经过新仓库 CI 的签名产物验证，不得把本地安装包作为 GitHub updater/tag
+  Release 的签名验证证据。
 
 ## 集成与远程切换（2026-07-28）
 
@@ -73,8 +74,12 @@
   NSIS 构建。
 - 集成人以 `git push --force origin main:main` 成功将远程 `main` 替换为上述干净
   history；未创建 tag、Release 或发布资产。
-- 集成人随后删除了 12 个非默认历史分支。`feat/phase5-subtasks-bugs-prd` 仍是
-  GitHub 默认分支，不能由只有 push 权限的 `tangxing7028` 删除。仓库管理员必须
-  先将默认分支切换为 `main`，然后删除该最后的旧分支并记录结果。
-- P1 发布延期：签名私钥密码不可用，且远程仍有旧默认分支；这两项均阻止 updater
-  tag/Release，但不阻止已完成的客户端源码推送和本地 NSIS 安装包使用。
+- 集成人随后删除了 12 个非默认历史分支。2026-07-29 仓库所有者将默认分支切换为
+  `main` 后，集成人删除最后的 `feat/phase5-subtasks-bugs-prd`；最终
+  `git ls-remote --heads origin` 仅返回 `main`=`4bce7d7cdca535ec8c33622f2371b0ce56314f1e`。
+  同次核对无 tag、无 Release。
+- 用户确认 `TAURI_SIGNING_PRIVATE_KEY` 已在 GitHub Repository secrets 配置；当前
+  命令行账号没有管理员权限，不能读取 secret 内容。私钥未加密码时
+  `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` 可省略，绝不可填临时或猜测密码。
+- P1 发布延期：尚未由新仓库 CI 验证签名产物与 updater manifest，且客户端/服务端
+  契约尚待端到端验收；这两项阻止 updater tag/Release，但不阻止已完成的客户端源码推送和本地 NSIS 安装包使用。

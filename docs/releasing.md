@@ -4,7 +4,7 @@
 
 干净客户端历史已由独立审核者确认 Git 历史、索引边界、客户端测试和 Windows NSIS 构建；2026-07-28 已在用户书面授权下推送源码到 `main`。它仍不是已发布版本：
 
-- 不得创建 tag、创建 GitHub Release 或触发发布工作流，直到仓库管理员删除旧默认分支、签名私钥密码可用并完成客户端/服务联调。
+- 不得创建 tag、创建 GitHub Release 或触发发布工作流，直到签名配置由独立发布任务验证并完成客户端/服务联调。
 - 不得复用或重建旧项目的 tag；当前源文件中的 `2.3.3` 只是来源应用版本，不表示本仓库拥有 `v2.3.3` 发布。
 - 不得把服务镜像、数据卷 archive、服务端 `.env`、数据库、私钥或测试账号加入提交或 Release 资产。
 
@@ -42,7 +42,7 @@ bash scripts/bump-version.sh patch
 | Secret 名称 | 应填写的值 | 说明 |
 |---|---|---|
 | `TAURI_SIGNING_PRIVATE_KEY` | `%USERPROFILE%\.tauri\focus-task.key` 的完整原始文本 | 填入文件内容，不是文件路径，不加引号；必须沿用现有 updater 公钥对应的私钥。 |
-| `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | 创建该私钥时使用的原始密码 | 不是 Windows 登录密码、GitHub token 或私钥文件路径。私钥未设置密码时不创建此 secret；密码未知时不得猜测或新建密码。 |
+| `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | 创建该私钥时使用的原始密码（仅私钥加密时） | 不是 Windows 登录密码、GitHub token 或私钥文件路径。私钥未设置密码时不创建此 secret；密码未知时不得猜测或新建密码。 |
 
 私钥和密码绝不能写入 Git、任务记录、镜像、日志或 Release 附件。若原密码无法找回，
 不要直接生成新 key；新 key 会破坏已安装客户端对 updater 签名的信任，必须另立迁移任务。
