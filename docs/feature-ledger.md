@@ -16,9 +16,9 @@
 | 登录与会话 | 用户可注册、登录和退出；登录态仅使用 Windows Credential Manager，不回退到 WebView `localStorage`。 | `frontend/src/stores/authStore.ts`、`frontend/src/utils/secureStorage.ts`、`frontend/src-tauri/src/lib.rs`、`frontend/src/stores/authStore.test.ts`、`frontend/src/utils/secureStorage.test.ts` | 当前源码包含 |
 | 任务工作台 | 四象限、今日、已完成、汇总视图；任务详情、状态、日期、优先级、子任务、重复和提醒偏好。 | `frontend/src/views/MatrixView.vue`、`TodayView.vue`、`DoneView.vue`、`SummaryView.vue`、`frontend/src/stores/taskStore.ts` | 当前源码包含 |
 | 内容与文件 | 任务 Markdown、普通附件、PRD 附件，以及日报/周报/月报的预览和下载。 | `frontend/src/components/ContentModal.vue`、`DetailPanel.vue`、`frontend/src/api/index.ts` | 当前源码包含 |
-| 报告文档本机文件操作 | 文档归档中的每份任务 Markdown 可预览、保存到 Windows 本机，并在下载后定位到所在文件夹；汇总报告同样保存到可见目录。桌面端目录为 `Documents\Focus Task\Reports`，浏览器开发模式退回普通下载。 | `frontend/src/views/ReportsView.vue`、`frontend/src/utils/reportFileActions.ts`、`frontend/src/views/ReportsView.test.ts`、`frontend/src-tauri/src/lib.rs` | `v2.3.4` 已合入并推送；签名 Release CI 待定 |
+| 报告文档本机文件操作 | 文档归档中的每份任务 Markdown 可预览、保存到 Windows 本机，并在下载后定位到所在文件夹；汇总报告同样保存到可见目录。桌面端目录为 `Documents\Focus Task\Reports`，浏览器开发模式退回普通下载。 | `frontend/src/views/ReportsView.vue`、`frontend/src/utils/reportFileActions.ts`、`frontend/src/views/ReportsView.test.ts`、`frontend/src-tauri/src/lib.rs` | `v2.3.4` 已公开签名 Release |
 | 协作界面 | 需求池、关联任务、团队、邀请、角色、成员只读任务视图、评论和任务转交界面。 | `frontend/src/views/RequirementsView.vue`、`TeammatesView.vue`、`frontend/src/stores/requirementStore.ts`、`teamStore.ts` | 当前源码包含；服务 API 契约须联调 |
-| Windows 体验 | Windows 通知、错误日志落盘、安装包内 WebView2 loader、应用内更新检查。 | `frontend/src/utils/notifications.ts`、`frontend/src/composables/useAppLogger.ts`、`useAppUpdate.ts`、`frontend/src-tauri/src/lib.rs`、`.github/workflows/release.yml` | 当前源码包含 |
+| Windows 体验 | Windows 通知、错误日志落盘、安装包内 WebView2 loader、应用内更新检查。静默检查不会占用手动“检查中”状态；更新弹窗显示连接、下载、安装、重启或失败原因。 | `frontend/src/utils/notifications.ts`、`frontend/src/composables/useAppLogger.ts`、`frontend/src/composables/useAppUpdate.ts`、`frontend/src/composables/useAppUpdate.test.ts`、`frontend/src-tauri/src/lib.rs`、`.github/workflows/release.yml` | `v2.3.5` 本地 NSIS 已生成，待集成和 tag |
 | 服务不可用反馈 | 本机服务不可达时显示明确连接信息；恢复服务后可重新加载。 | `frontend/src/api/base.ts`、`frontend/src/views/AppLayout.vue`、`frontend/src/views/AppLayout.test.ts` | 当前源码包含 |
 
 ## 客户端/服务边界
@@ -41,7 +41,8 @@
   `windows-x86_64` URL 指向该 canonical 安装包。公开 `.exe` 已由客户端 updater
   公钥和 `minisign-verify` 验证签名。详见
   `task-records/2026-07-29-codex-v2-3-3-windows-validation-release.md`。
-- `v2.3.4` 已完成独立实现、审核和修复复核：前端 34/34、production build、Rust 5/5、format/diff 检查均通过；本机 NSIS 已生成。`main` 与 tag 已推送，正式签名 Release 状态须以 GitHub Actions 为准，详见 `task-records/2026-07-29-codex-report-file-actions.md`。
+- `v2.3.4` 已完成独立实现、审核和修复复核：前端 34/34、production build、Rust 5/5、format/diff 检查均通过；本机 NSIS 已生成。`main` 与 tag 已推送，GitHub Actions `30418166272` 已公开签名 Release、`.sig` 与 `latest.json`，详见 `task-records/2026-07-29-codex-report-file-actions.md`。
+- `v2.3.5` updater 反馈修复已完成独立实现和双重独立审核：前端 36/36、production build、Rust 5/5、format/diff 检查均通过；`Focus Task_2.3.5_x64-setup.exe` 已本地生成。静默检查不再占用设置页手动状态，手动重试使用新的原生 timeout 请求，安装反馈与失败信息在当前弹窗可见。待集成和 tag，详见 `task-records/2026-07-29-codex-updater-feedback-timeout.md`。
 
 ## 已知风险与门禁
 
@@ -54,7 +55,8 @@
 ## 发布状态
 
 - `v2.3.3` 已作为 Windows 本地服务验证发布；公开 Release、`.sig` 与 `latest.json` 已由 CI 成功生成，但用户安装后的登录与任务读取联调尚待记录。
-- `v2.3.4` tag 已推送，用于报告文档本机保存与文件夹定位补丁；签名 Release 工作流已触发，尚未在本记录中宣称其成功。
+- `v2.3.4` 已作为报告文档本机保存与文件夹定位补丁公开发布；签名 Release、`.sig` 与 `latest.json` 已由 GitHub Actions `30418166272` 成功生成。
+- `v2.3.5` 是 Windows updater 体验修复版，本地 NSIS 已验证，待集成人合入和 tag 推送；它不改变客户端/服务边界、服务 API、数据卷或旧任务兼容承诺。
 - 任何下一次 tag 必须在集成人确认版本、签名配置、独立审核和客户端/服务联调后创建；密码只在私钥加密时需要。
 - 远程分支只保留干净客户端 `main`；该客户端/服务边界不随本 Release 改变。
 - 服务镜像和可选数据卷归档均由服务仓库交付；它们永远不是本客户端 GitHub Release 的资产。
