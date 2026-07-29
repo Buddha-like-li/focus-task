@@ -16,6 +16,7 @@
 | 登录与会话 | 用户可注册、登录和退出；登录态仅使用 Windows Credential Manager，不回退到 WebView `localStorage`。 | `frontend/src/stores/authStore.ts`、`frontend/src/utils/secureStorage.ts`、`frontend/src-tauri/src/lib.rs`、`frontend/src/stores/authStore.test.ts`、`frontend/src/utils/secureStorage.test.ts` | 当前源码包含 |
 | 任务工作台 | 四象限、今日、已完成、汇总视图；任务详情、状态、日期、优先级、子任务、重复和提醒偏好。 | `frontend/src/views/MatrixView.vue`、`TodayView.vue`、`DoneView.vue`、`SummaryView.vue`、`frontend/src/stores/taskStore.ts` | 当前源码包含 |
 | 内容与文件 | 任务 Markdown、普通附件、PRD 附件，以及日报/周报/月报的预览和下载。 | `frontend/src/components/ContentModal.vue`、`DetailPanel.vue`、`frontend/src/api/index.ts` | 当前源码包含 |
+| 报告文档本机文件操作 | 文档归档中的每份任务 Markdown 可预览、保存到 Windows 本机，并在下载后定位到所在文件夹；汇总报告同样保存到可见目录。桌面端目录为 `Documents\Focus Task\Reports`，浏览器开发模式退回普通下载。 | `frontend/src/views/ReportsView.vue`、`frontend/src/utils/reportFileActions.ts`、`frontend/src/views/ReportsView.test.ts`、`frontend/src-tauri/src/lib.rs` | `v2.3.4` 候选，已独立审核 |
 | 协作界面 | 需求池、关联任务、团队、邀请、角色、成员只读任务视图、评论和任务转交界面。 | `frontend/src/views/RequirementsView.vue`、`TeammatesView.vue`、`frontend/src/stores/requirementStore.ts`、`teamStore.ts` | 当前源码包含；服务 API 契约须联调 |
 | Windows 体验 | Windows 通知、错误日志落盘、安装包内 WebView2 loader、应用内更新检查。 | `frontend/src/utils/notifications.ts`、`frontend/src/composables/useAppLogger.ts`、`useAppUpdate.ts`、`frontend/src-tauri/src/lib.rs`、`.github/workflows/release.yml` | 当前源码包含 |
 | 服务不可用反馈 | 本机服务不可达时显示明确连接信息；恢复服务后可重新加载。 | `frontend/src/api/base.ts`、`frontend/src/views/AppLayout.vue`、`frontend/src/views/AppLayout.test.ts` | 当前源码包含 |
