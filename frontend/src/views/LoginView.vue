@@ -28,7 +28,7 @@
         <button type="submit" class="form-btn" :disabled="loading">
           {{ loading ? '处理中…' : isRegister ? '注册' : '登录' }}
         </button>
-        <p v-if="errorMsg" class="error-msg">{{ errorMsg }}</p>
+        <p v-if="displayedError" class="error-msg">{{ displayedError }}</p>
         <p class="switch-mode" @click="isRegister = !isRegister">
           {{ isRegister ? '已有账号？去登录' : '没有账号？去注册' }}
         </p>
@@ -38,7 +38,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, onMounted, onUnmounted } from 'vue'
+import { computed, ref, reactive, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/authStore'
 import { clearRememberedUsername, loadRememberedUsername, saveRememberedUsername } from '@/utils/secureStorage'
@@ -52,9 +52,11 @@ const loading = ref(false)
 const errorMsg = ref('')
 const rememberUsername = ref(true)
 const form = reactive({ username: '', password: '' })
+const displayedError = computed(() => errorMsg.value || auth.restoreError)
 
 async function handleSubmit() {
   errorMsg.value = ''
+  auth.clearRestoreError()
   if (!form.username || !form.password) {
     errorMsg.value = '请输入用户名和密码'
     return

@@ -19,16 +19,21 @@ export const useRequirementStore = defineStore('requirements', () => {
   const requirements = ref<Requirement[]>([])
   const loading = ref(false)
   const error = ref('')
+  let sessionRevision = 0
 
   async function fetchAll() {
+    const requestRevision = sessionRevision
     loading.value = true
     error.value = ''
     try {
-      requirements.value = await listRequirements()
+      const fetched = await listRequirements()
+      if (requestRevision !== sessionRevision) return
+      requirements.value = fetched
     } catch (err: any) {
+      if (requestRevision !== sessionRevision) return
       error.value = err?.message || '加载需求失败'
     } finally {
-      loading.value = false
+      if (requestRevision === sessionRevision) loading.value = false
     }
   }
 
@@ -51,6 +56,7 @@ export const useRequirementStore = defineStore('requirements', () => {
 
   /** Remove requirements from the prior account before another user signs in. */
   function clearSessionState() {
+    sessionRevision += 1
     requirements.value = []
     error.value = ''
     loading.value = false

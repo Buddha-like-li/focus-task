@@ -8,11 +8,12 @@ use tauri::Manager;
 use tauri_plugin_notification::NotificationExt;
 
 const SERVICE_NAME: &str = "FocusTask";
-const TOKEN_ACCOUNT: &str = "auth_token";
-const USERNAME_ACCOUNT: &str = "auth_username";
+const AUTH_STATE_ACCOUNT: &str = "auth_state";
+const LEGACY_TOKEN_ACCOUNT: &str = "auth_token";
+const LEGACY_USERNAME_ACCOUNT: &str = "auth_username";
 const REPORT_EXPORT_DIRECTORY: [&str; 2] = ["Focus Task", "Reports"];
 
-#[derive(Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 struct AuthState {
     token: String,
     username: String,
@@ -28,59 +29,141 @@ fn keyring_entry(account: &str) -> Result<Entry, String> {
     Entry::new(SERVICE_NAME, account).map_err(|err| err.to_string())
 }
 
+fn read_credential(account: &str) -> Result<Option<String>, String> {
+    match keyring_entry(account)?.get_password() {
+        Ok(value) => Ok(Some(value)),
+        Err(keyring::Error::NoEntry) => Ok(None),
+        Err(err) => Err(err.to_string()),
+    }
+}
+
+fn deserialize_auth_state(serialized: &str) -> Result<AuthState, String> {
+    let state: AuthState = serde_json::from_str(serialized)
+        .map_err(|_| "Windows Credential Manager 中的登录状态格式无效".to_string())?;
+    if state.token.trim().is_empty() {
+        return Err("Windows Credential Manager 中的登录令牌为空".to_string());
+    }
+    Ok(state)
+}
+
+fn clear_accounts<F>(accounts: &[&str], mut delete: F) -> Result<(), String>
+where
+    F: FnMut(&str) -> Result<(), String>,
+{
+    let mut failures = Vec::new();
+    for account in accounts {
+        if let Err(err) = delete(account) {
+            failures.push(format!("{account}: {err}"));
+        }
+    }
+
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "无法完整清除 Windows 凭据管理器登录状态：{}",
+            failures.join("；")
+        ))
+    }
+}
+
+fn delete_credential(account: &str) -> Result<(), String> {
+    match keyring_entry(account)?.delete_credential() {
+        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+        Err(err) => Err(err.to_string()),
+    }
+}
+
+fn clear_legacy_auth_state() -> Result<(), String> {
+    clear_accounts(
+        &[LEGACY_TOKEN_ACCOUNT, LEGACY_USERNAME_ACCOUNT],
+        delete_credential,
+    )
+}
+
+fn clear_auth_state_entries<F>(mut delete: F) -> Result<(), String>
+where
+    F: FnMut(&str) -> Result<(), String>,
+{
+    // Delete both legacy records before the new atomic record. If either
+    // legacy deletion fails, leave auth_state intact so the next launch keeps
+    // using the current session instead of falling back to an old token.
+    clear_accounts(
+        &[LEGACY_TOKEN_ACCOUNT, LEGACY_USERNAME_ACCOUNT],
+        |account| delete(account),
+    )?;
+    delete(AUTH_STATE_ACCOUNT)
+}
+
+fn load_legacy_auth_state() -> Result<Option<AuthState>, String> {
+    let token = read_credential(LEGACY_TOKEN_ACCOUNT)?;
+    let username = read_credential(LEGACY_USERNAME_ACCOUNT)?;
+
+    match token {
+        Some(token) if !token.trim().is_empty() => Ok(Some(AuthState {
+            token,
+            username: username.unwrap_or_default(),
+        })),
+        _ => Ok(None),
+    }
+}
+
 #[tauri::command]
 fn load_auth_state() -> Result<Option<AuthState>, String> {
-    let token_entry = keyring_entry(TOKEN_ACCOUNT)?;
-    let username_entry = keyring_entry(USERNAME_ACCOUNT)?;
+    if let Some(serialized) = read_credential(AUTH_STATE_ACCOUNT)? {
+        return deserialize_auth_state(&serialized).map(Some);
+    }
 
-    let token = match token_entry.get_password() {
-        Ok(value) => value,
-        Err(keyring::Error::NoEntry) => return Ok(None),
-        Err(err) => return Err(err.to_string()),
-    };
-    let username = match username_entry.get_password() {
-        Ok(value) => value,
-        Err(keyring::Error::NoEntry) => String::new(),
-        Err(err) => return Err(err.to_string()),
-    };
-
-    Ok(Some(AuthState { token, username }))
+    // Existing installations used two credential records. Read them only
+    // when the new atomic record is absent; logout clears all three records.
+    load_legacy_auth_state()
 }
 
 #[tauri::command]
 fn save_auth_state(state: AuthState) -> Result<(), String> {
+    if state.token.trim().is_empty() {
+        return Err("拒绝保存空登录令牌".to_string());
+    }
+
     let save_result = (|| {
-        keyring_entry(TOKEN_ACCOUNT)?
-            .set_password(&state.token)
-            .map_err(|err| err.to_string())?;
-        keyring_entry(USERNAME_ACCOUNT)?
-            .set_password(&state.username)
+        let serialized =
+            serde_json::to_string(&state).map_err(|_| "无法序列化登录状态".to_string())?;
+        keyring_entry(AUTH_STATE_ACCOUNT)?
+            .set_password(&serialized)
             .map_err(|err| err.to_string())?;
 
-        match load_auth_state()? {
-            Some(saved) if saved == state => Ok(()),
-            _ => Err("Windows Credential Manager did not retain the saved session".to_string()),
+        match read_credential(AUTH_STATE_ACCOUNT)? {
+            Some(saved) => {
+                if deserialize_auth_state(&saved)? == state {
+                    Ok(())
+                } else {
+                    Err("Windows Credential Manager 未保留完整登录状态".to_string())
+                }
+            }
+            None => Err("Windows Credential Manager 未保留登录状态".to_string()),
         }
     })();
 
-    if save_result.is_err() {
-        // Do not leave a partial token or username behind when a two-record
-        // Credential Manager write cannot be verified.
-        let _ = clear_auth_state();
+    if let Err(error) = save_result {
+        // A failed write must not leave a recoverable partial session. Cleanup
+        // preserves a current atomic session if legacy deletion fails, so a
+        // later launch cannot fall back to an older legacy token.
+        return match clear_auth_state() {
+            Ok(()) => Err(error),
+            Err(cleanup_error) => Err(format!("{error}；清理失败：{cleanup_error}")),
+        };
     }
-    save_result
+
+    // The new record contains token and username atomically. Legacy cleanup is
+    // best effort after a verified save; a later logout still attempts every
+    // account so an unavailable old record cannot short-circuit deletion.
+    let _ = clear_legacy_auth_state();
+    Ok(())
 }
 
 #[tauri::command]
 fn clear_auth_state() -> Result<(), String> {
-    for account in [TOKEN_ACCOUNT, USERNAME_ACCOUNT] {
-        if let Err(err) = keyring_entry(account)?.delete_credential() {
-            if !matches!(err, keyring::Error::NoEntry) {
-                return Err(err.to_string());
-            }
-        }
-    }
-    Ok(())
+    clear_auth_state_entries(delete_credential)
 }
 
 #[tauri::command]
@@ -385,5 +468,66 @@ mod report_export_tests {
         );
 
         fs::remove_dir_all(&root).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod auth_state_tests {
+    use super::*;
+
+    #[test]
+    fn serialized_auth_state_round_trips_without_a_password() {
+        let expected = AuthState {
+            token: "service-jwt".to_string(),
+            username: "alice".to_string(),
+        };
+
+        let serialized = serde_json::to_string(&expected).unwrap();
+        assert_eq!(deserialize_auth_state(&serialized).unwrap(), expected);
+        assert!(deserialize_auth_state("not-json").is_err());
+        assert!(deserialize_auth_state(r#"{"token":"","username":"alice"}"#).is_err());
+    }
+
+    #[test]
+    fn cleanup_attempts_both_legacy_records_before_preserving_current_session() {
+        let mut attempted = Vec::new();
+        let result = clear_auth_state_entries(|account| {
+            attempted.push(account.to_string());
+            if account == LEGACY_TOKEN_ACCOUNT {
+                Err("simulated delete failure".to_string())
+            } else {
+                Ok(())
+            }
+        });
+
+        assert_eq!(
+            attempted,
+            vec![
+                LEGACY_TOKEN_ACCOUNT.to_string(),
+                LEGACY_USERNAME_ACCOUNT.to_string(),
+            ]
+        );
+        let error = result.unwrap_err();
+        assert!(error.contains(LEGACY_TOKEN_ACCOUNT));
+        assert!(error.contains("simulated delete failure"));
+    }
+
+    #[test]
+    fn cleanup_removes_current_record_only_after_legacy_records_are_gone() {
+        let mut attempted = Vec::new();
+        clear_auth_state_entries(|account| {
+            attempted.push(account.to_string());
+            Ok(())
+        })
+        .unwrap();
+
+        assert_eq!(
+            attempted,
+            vec![
+                LEGACY_TOKEN_ACCOUNT.to_string(),
+                LEGACY_USERNAME_ACCOUNT.to_string(),
+                AUTH_STATE_ACCOUNT.to_string(),
+            ]
+        );
     }
 }

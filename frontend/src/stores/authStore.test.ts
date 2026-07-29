@@ -3,6 +3,7 @@ import { createPinia, setActivePinia } from 'pinia'
 
 vi.mock('@/api', () => ({
   getMe: vi.fn(),
+  login: vi.fn(),
   setAuthToken: vi.fn(),
   isAuthenticationFailure: vi.fn(),
 }))
@@ -70,6 +71,32 @@ describe('stored service session validation', () => {
     expect(auth.isLoggedIn).toBe(false)
     expect(auth.token).toBe('')
     expect(api.setAuthToken).toHaveBeenLastCalledWith(null)
+  })
+
+  it('shows a safe restore error instead of treating a Credential Manager read failure as logout', async () => {
+    vi.mocked(loadAuthState).mockRejectedValue(new Error('Credential Manager unavailable'))
+
+    const auth = useAuthStore()
+    await auth.init()
+
+    expect(auth.ready).toBe(true)
+    expect(auth.isLoggedIn).toBe(false)
+    expect(auth.restoreError).toBe('无法读取已保存的登录状态，请检查 Windows 凭据管理器后重试。')
+    expect(api.setAuthToken).toHaveBeenLastCalledWith(null)
+  })
+
+  it('rejects login when the fresh token is immediately rejected by the service', async () => {
+    vi.mocked(api.login).mockResolvedValue({ accessToken: 'new-token' })
+    vi.mocked(api.getMe).mockRejectedValue(new Error('Could not validate credentials'))
+    vi.mocked(api.isAuthenticationFailure).mockReturnValue(true)
+
+    const auth = useAuthStore()
+
+    await expect(auth.login('alice', 'password')).rejects.toThrow('登录状态验证失败，请重新登录。')
+
+    expect(auth.isLoggedIn).toBe(false)
+    expect(auth.token).toBe('')
+    expect(clearAuthState).toHaveBeenCalledTimes(1)
   })
 
   it('clears persisted credentials and account-specific state before switching accounts', async () => {

@@ -41,6 +41,22 @@ describe('API network failures', () => {
     )
   })
 
+  it('allows a new login request when restoring an old desktop session failed', async () => {
+    vi.mocked(loadAuthState).mockRejectedValue(new Error('Credential Manager unavailable'))
+    fetchMock.mockResolvedValueOnce({
+      ok: false,
+      status: 401,
+      statusText: 'Unauthorized',
+      json: async () => ({ detail: 'Incorrect username or password' }),
+    })
+
+    const error = await login('tester', 'password').catch(error => error)
+
+    expect(error).toBeInstanceOf(ApiRequestError)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(loadAuthState).not.toHaveBeenCalled()
+  })
+
   it('uses the same direct service origin for attachments', async () => {
     await expect(listTaskAttachments(7)).rejects.toThrow(localServiceNetworkMessage)
     expect(fetchMock.mock.calls[0]?.[0]).toBe('http://127.0.0.1:18765/api/tasks/7/attachments')

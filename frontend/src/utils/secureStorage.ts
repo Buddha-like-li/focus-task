@@ -37,10 +37,10 @@ export async function loadAuthState(): Promise<AuthState> {
     return { token: '', username: '' }
   } catch (error) {
     // Do not confuse an unavailable Credential Manager with an intentional
-    // signed-out state. Startup can still show LoginView, while frontend.log
-    // records why the persisted session could not be restored.
+    // signed-out state. The auth store keeps this safe message for LoginView,
+    // while frontend.log retains the native failure detail without a token.
     appLogger.warn('[认证] 无法从 Windows 凭据管理器恢复登录状态', error)
-    return { token: '', username: '' }
+    throw new Error('无法读取已保存的登录状态，请检查 Windows 凭据管理器后重试。')
   } finally {
     // Remove legacy WebView tokens after moving to Credential Manager. Tauri
     // never falls back to browser storage for bearer credentials.

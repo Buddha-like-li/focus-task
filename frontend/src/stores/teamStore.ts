@@ -20,6 +20,7 @@ export const useTeamStore = defineStore('team', () => {
   const team = ref<Team | null>(null)
   const members = ref<TeamMember[]>([])
   const loading = ref(false)
+  let sessionRevision = 0
 
   const hasTeam = computed(() => !!team.value)
   const isInTeam = computed(() => {
@@ -53,16 +54,19 @@ export const useTeamStore = defineStore('team', () => {
 
   /** Fetch the single global team + active members. No-op-safe on 404. */
   async function fetchTeam() {
+    const requestRevision = sessionRevision
     loading.value = true
     try {
       const t = await api.getTeam()
+      if (requestRevision !== sessionRevision) return
       team.value = t
       members.value = t ? t.members : []
     } catch {
+      if (requestRevision !== sessionRevision) return
       team.value = null
       members.value = []
     } finally {
-      loading.value = false
+      if (requestRevision === sessionRevision) loading.value = false
     }
   }
 
@@ -115,6 +119,7 @@ export const useTeamStore = defineStore('team', () => {
 
   /** Remove team data from the prior account before another user signs in. */
   function clearSessionState() {
+    sessionRevision += 1
     team.value = null
     members.value = []
     loading.value = false

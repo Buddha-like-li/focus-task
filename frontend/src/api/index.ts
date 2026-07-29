@@ -146,7 +146,10 @@ async function request(method: string, path: string, body?: any, extraHeaders: R
     'Content-Type': 'application/json',
     ...extraHeaders,
   }
-  const token = await getAuthToken()
+  // Login and registration establish a session, so they must remain usable
+  // when reading an old Credential Manager entry failed during startup.
+  const isAuthEndpoint = path.startsWith('/api/auth/login') || path.startsWith('/api/auth/register')
+  const token = isAuthEndpoint ? '' : await getAuthToken()
   if (token) headers['Authorization'] = `Bearer ${token}`
 
   let res: Response
@@ -166,7 +169,6 @@ async function request(method: string, path: string, body?: any, extraHeaders: R
     const detail = typeof err?.detail === 'string' ? err.detail : ''
     // A 401 on the login/register endpoints is a wrong-credentials error, not
     // a session-expiry event -- don't trigger the auth-expired redirect.
-    const isAuthEndpoint = path.startsWith('/api/auth/login') || path.startsWith('/api/auth/register')
     if (!isAuthEndpoint && isAuthError(res.status, detail) && authExpiredHandler) {
       authExpiredHandler()
     }

@@ -96,11 +96,11 @@ describe('secureStorage', () => {
     expect(localStorage.getItem(USERNAME_KEY)).toBeNull()
   })
 
-  it('records a Credential Manager read failure instead of silently treating it as a normal logout', async () => {
+  it('records and surfaces a Credential Manager read failure instead of silently treating it as a normal logout', async () => {
     setTauriRuntime(true)
     vi.mocked(invoke).mockRejectedValue(new Error('Credential Manager unavailable'))
 
-    await expect(loadAuthState()).resolves.toEqual({ token: '', username: '' })
+    await expect(loadAuthState()).rejects.toThrow('无法读取已保存的登录状态，请检查 Windows 凭据管理器后重试。')
 
     expect(appLogger.warn).toHaveBeenCalledWith(
       '[认证] 无法从 Windows 凭据管理器恢复登录状态',

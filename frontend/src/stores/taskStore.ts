@@ -50,6 +50,9 @@ export const useTaskStore = defineStore('tasks', () => {
   const filterQuadrant = ref<number | null>(null)
   const loading = ref(false)
   const serviceError = ref('')
+  // A logout invalidates all requests started by the prior account. This is
+  // deliberately separate from request ordering within one account.
+  let sessionRevision = 0
 
   function normalizeTask(task: Task): Task {
     return {
@@ -94,6 +97,7 @@ export const useTaskStore = defineStore('tasks', () => {
 
   /** Remove account-specific task data before another user signs in. */
   function clearSessionState() {
+    sessionRevision += 1
     tasks.value = []
     selectedTaskId.value = null
     searchQuery.value = ''
@@ -125,16 +129,20 @@ export const useTaskStore = defineStore('tasks', () => {
   )
 
   async function fetchTasks() {
+    const requestRevision = sessionRevision
     loading.value = true
     serviceError.value = ''
     try {
-      replaceServerTasks(await api.listTasks(true))
+      const serverTasks = await api.listTasks(true)
+      if (requestRevision !== sessionRevision) return
+      replaceServerTasks(serverTasks)
     } catch (error) {
+      if (requestRevision !== sessionRevision) return
       serviceError.value = error instanceof Error ? error.message : '无法连接 Focus Task 服务'
       appLogger.warn('[tasks] fetchTasks failed', error)
       throw error
     } finally {
-      loading.value = false
+      if (requestRevision === sessionRevision) loading.value = false
     }
   }
 

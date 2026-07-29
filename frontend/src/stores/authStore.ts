@@ -13,10 +13,22 @@ export const useAuthStore = defineStore('auth', () => {
   const role = ref<string>('')
   const isLoggedIn = ref(!!token.value)
   const ready = ref(false)
+  // Credential Manager failures are not ordinary signed-out states. Keep a
+  // safe actionable message for LoginView without exposing native details.
+  const restoreError = ref('')
 
   async function init() {
     ready.value = false
-    const state = await loadAuthState()
+    restoreError.value = ''
+    let state
+    try {
+      state = await loadAuthState()
+    } catch {
+      resetSession()
+      restoreError.value = '无法读取已保存的登录状态，请检查 Windows 凭据管理器后重试。'
+      ready.value = true
+      return
+    }
     token.value = state.token
     username.value = state.username
     isLoggedIn.value = !!state.token
@@ -68,6 +80,7 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   async function login(user: string, password: string) {
+    restoreError.value = ''
     const res = await api.login(user, password)
     // Tauri persistence is intentionally keyring-only. Do not make the
     // authenticated in-memory state visible until the token is stored safely.
@@ -79,7 +92,9 @@ export const useAuthStore = defineStore('auth', () => {
     // request (fetchTasks on AppLayout mount) uses the fresh token.
     api.setAuthToken(res.accessToken)
     // P6: populate userId + role right after login so the UI can gate on them.
-    await refreshIdentity()
+    if (!await refreshIdentity()) {
+      throw new Error('登录状态验证失败，请重新登录。')
+    }
   }
 
   async function logout() {
@@ -89,6 +104,7 @@ export const useAuthStore = defineStore('auth', () => {
     // appear successful only until the next launch.
     await clearAuthState()
     resetSession()
+    restoreError.value = ''
     await clearAccountScopedState()
   }
 
@@ -99,6 +115,10 @@ export const useAuthStore = defineStore('auth', () => {
    */
   async function invalidateSession() {
     await clearSession()
+  }
+
+  function clearRestoreError() {
+    restoreError.value = ''
   }
 
   function resetSession() {
@@ -112,6 +132,7 @@ export const useAuthStore = defineStore('auth', () => {
 
   async function clearSession() {
     resetSession()
+    restoreError.value = ''
     await clearAccountScopedState()
     try {
       await clearAuthState()
@@ -143,11 +164,13 @@ export const useAuthStore = defineStore('auth', () => {
     role,
     isLoggedIn,
     ready,
+    restoreError,
     init,
     register,
     login,
     logout,
     invalidateSession,
+    clearRestoreError,
     refreshIdentity,
   }
 })
