@@ -63,4 +63,4 @@
 
 - 集成人 `/root` 已将经过独立复核的功能分支 fast-forward 合入 `main`；集成代码 SHA 为 `1975b01d6f59655e4ef424543e76bc625afa0b34`。
 - 集成前后复跑前端 36/36、production build、Rust 5/5、`cargo fmt --check`、`git diff --check`；Windows 本地 NSIS 已生成。唯一的本地签名缺失来自未向终端导入私钥，私钥未进入工作树。
-- 将在本集成记录提交后创建并推送 `v2.3.5`，以触发 GitHub Actions 使用已配置的 Repository Secret 生成 signed Windows `.exe`、`.sig` 与 `latest.json`。按用户指示，推送完成即交付，不等待 CI 完成。
+- `main` 已推送到 `origin`，带注释 tag `v2.3.5` 已推送并指向本集成记录提交 `fad28c1eff4c60d7c13b78873c1cab8f1d21fe12`；tag 已触发 GitHub Actions，使用已配置的 Repository Secret 生成 signed Windows `.exe`、`.sig` 与 `latest.json`。按用户指示，推送完成即交付，不等待 CI 完成。
