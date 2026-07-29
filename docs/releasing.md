@@ -26,6 +26,23 @@
 bash scripts/bump-version.sh patch
 ```
 
+## 中文更新说明
+
+每个拟发布的 tag 都必须在创建 tag 前新增对应的
+`docs/release-notes/vX.Y.Z.md`。该文件是面向用户的唯一更新说明来源，
+并且必须满足以下要求：
+
+- 内容必须准确描述该版本已经完成并验收的用户可见变更，使用纯中文撰写；
+  不得把英文提交信息、内部任务名、技术资产文件名、命令、路径、协议地址或占位文本直接展示给用户。
+- 标题、正文和 `latest.json` 的 `notes` 都必须使用中文。技术资产文件名、
+  下载地址和工作流标识只允许出现在系统元数据或下载资产列表中，不得写入版本说明源文件。
+- 发布工作流会在 tag 预检阶段先调用 `scripts/validate-release-notes.sh`，使缺失或不合规说明在 Windows 签名构建前失败；写入 GitHub Release 正文和生成 updater manifest 前还会分别再次校验。该校验会拒绝空文件及含英文 ASCII 字母的说明。
+- GitHub Release 标题由工作流生成为中文版本标题；GitHub Release 正文和
+  `latest.json` 的 `notes` 必须直接使用同一份版本说明文件，禁止各自维护或再写英文摘要。
+
+发布说明不是提交记录。完成实现、独立审核和集成后，由集成人根据对应任务记录写入
+版本说明，再创建 tag。
+
 ## 发布前门禁
 
 1. 实现任务已经独立审核并在任务记录中写明复核结论。
@@ -58,7 +75,7 @@ tag `v*.*.*` 触发 `.github/workflows/release.yml` 的 Windows-only 流程：
 - 以 `Focus.Task_<version>_x64-setup.exe` 与同名 `.sig` 创建 draft Release
 - 生成 Windows-only `latest.json` 后公开 Release
 
-Tauri 本地构建产生的源文件名可能含空格；发布工作流会复制为上述带点的 canonical 资产名。`latest.json`、Release 文本和下载链接只能使用 canonical 名称。
+Tauri 本地构建产生的源文件名可能含空格；发布工作流会复制为上述带点的 canonical 资产名。`latest.json` 的下载地址和 Release 资产列表必须使用 canonical 名称；中文版本说明源文件不得写入资产名称或下载链接。
 
 ## 提交与推送
 
