@@ -757,6 +757,7 @@ onMounted(async () => {
   line-height: 1.6;
   color: var(--text-secondary);
   white-space: pre-wrap;
+  overflow-wrap: break-word;
   margin: 0 0 14px;
 }
 
@@ -776,6 +777,7 @@ onMounted(async () => {
   display: flex;
   align-items: center;
   gap: 6px;
+  flex-wrap: wrap;
 }
 
 .name-edit-input,
@@ -790,6 +792,10 @@ onMounted(async () => {
   font-size: 13px;
   outline: none;
   min-width: 0;
+}
+
+.name-edit-input {
+  flex: 1 1 120px;
 }
 
 .name-edit-input:focus,
@@ -826,6 +832,9 @@ onMounted(async () => {
   font-weight: 550;
   color: var(--text-primary);
   min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .member-self {

@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
     userId: 1,
     logout: vi.fn(),
   },
+  isTauri: true,
   team: {
     hasTeam: false,
     isManager: false,
@@ -45,6 +46,10 @@ vi.mock('naive-ui', () => ({
   NProgress: { template: '<div />' },
 }))
 
+vi.mock('@tauri-apps/api/app', () => ({
+  getVersion: vi.fn().mockResolvedValue('2.3.7'),
+}))
+
 vi.mock('@/stores/settingsStore', () => ({
   useSettingsStore: () => mocks.settings,
 }))
@@ -74,7 +79,7 @@ vi.mock('@/composables/useAppUpdate', () => ({
 }))
 
 vi.mock('@/utils/platform', () => ({
-  isTauriRuntime: () => false,
+  isTauriRuntime: () => mocks.isTauri,
 }))
 
 vi.mock('@/composables/useAppLogger', () => ({
@@ -97,6 +102,7 @@ describe('设置页账号操作', () => {
     vi.clearAllMocks()
     mocks.auth.username = 'alice'
     mocks.auth.logout.mockResolvedValue(undefined)
+    mocks.isTauri = true
   })
 
   afterEach(() => {
@@ -124,6 +130,11 @@ describe('设置页账号操作', () => {
     app.mount(mountPoint)
 
     expect(mountPoint.textContent).toContain('alice')
+    expect(mountPoint.textContent).not.toContain('远程服务器地址')
+    expect(mountPoint.textContent).not.toContain('连接远程服务器')
+    expect(mountPoint.textContent).not.toContain('同步队列')
+    expect(mountPoint.querySelector('input[placeholder="http://101.43.17.8:8080"]')).toBeNull()
+    expect(mountPoint.querySelector('input[placeholder="远端用户名"]')).toBeNull()
     const logoutButton = [...mountPoint.querySelectorAll<HTMLButtonElement>('button')]
       .find(button => button.textContent?.includes('退出登录'))
     expect(logoutButton).toBeDefined()
