@@ -63,4 +63,6 @@
 
 ### 集成
 
-待集成人完成 `2.3.4` 最终测试、功能总账更新、合入、tag 和推送后回填。
+- 集成人 `/root` 已将功能分支 fast-forward 合入 `main`，集成 SHA 为 `3c9e756fc8067cf36e2673d559016e7a4766d89a`。
+- `main` 已推送至 `origin`；`v2.3.4` tag 已推送并触发 GitHub Actions 的签名 Release 工作流。
+- 此记录不等待或声称 CI/Release 已完成；正式签名资产、`.sig` 与 `latest.json` 必须以 CI 结果为准。
