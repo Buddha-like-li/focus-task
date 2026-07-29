@@ -138,17 +138,15 @@ fn cleanup_failed_auth_save<F>(mut delete: F) -> Result<(), String>
 where
     F: FnMut(&str) -> Result<(), String>,
 {
-    // Save failure has different semantics from a manual logout: no previous
-    // session may revive after restart. Attempt the new record first and keep
-    // attempting both legacy records even if any deletion reports an error.
+    // A failed save leaves auth_state in the pending form, which is a startup
+    // gate. Clear both legacy records first; if either deletion fails, retain
+    // that gate so load_auth_state cannot fall back to an old account. Only
+    // remove the pending record after legacy cleanup completely succeeds.
     clear_accounts(
-        &[
-            AUTH_STATE_ACCOUNT,
-            LEGACY_TOKEN_ACCOUNT,
-            LEGACY_USERNAME_ACCOUNT,
-        ],
+        &[LEGACY_TOKEN_ACCOUNT, LEGACY_USERNAME_ACCOUNT],
         |account| delete(account),
-    )
+    )?;
+    delete(AUTH_STATE_ACCOUNT)
 }
 
 fn load_legacy_auth_state() -> Result<Option<AuthState>, String> {
@@ -682,7 +680,69 @@ mod auth_state_tests {
         assert_eq!(
             *deleted.borrow(),
             vec![
+                LEGACY_TOKEN_ACCOUNT.to_string(),
+                LEGACY_USERNAME_ACCOUNT.to_string(),
                 AUTH_STATE_ACCOUNT.to_string(),
+            ]
+        );
+        let pending = stored.borrow().clone().unwrap();
+        assert!(deserialize_stored_auth_state(&pending).unwrap().pending);
+
+        let restart_error = load_auth_state_with(
+            {
+                let stored = Rc::clone(&stored);
+                move |account| {
+                    assert_eq!(account, AUTH_STATE_ACCOUNT);
+                    Ok(stored.borrow().clone())
+                }
+            },
+            || panic!("pending auth_state must not fall back to legacy credentials"),
+        )
+        .unwrap_err();
+        assert!(restart_error.contains("尚未确认"));
+    }
+
+    #[test]
+    fn failed_pending_save_preserves_gate_when_legacy_token_delete_fails() {
+        let new_state = AuthState {
+            token: "new-service-jwt".to_string(),
+            username: "bob".to_string(),
+        };
+        let stored = Rc::new(RefCell::new(None::<String>));
+        let deleted = Rc::new(RefCell::new(Vec::<String>::new()));
+
+        let error = save_auth_state_with(
+            &new_state,
+            {
+                let stored = Rc::clone(&stored);
+                move |serialized| {
+                    *stored.borrow_mut() = Some(serialized.to_string());
+                    Ok(())
+                }
+            },
+            || Err("simulated pending verification failure".to_string()),
+            {
+                let deleted = Rc::clone(&deleted);
+                move |account| {
+                    deleted.borrow_mut().push(account.to_string());
+                    if account == LEGACY_TOKEN_ACCOUNT {
+                        Err("simulated legacy token delete failure".to_string())
+                    } else {
+                        // Deleting AUTH_STATE_ACCOUNT would succeed, but the
+                        // legacy failure must prevent this callback from being
+                        // reached for that account.
+                        Ok(())
+                    }
+                }
+            },
+        )
+        .unwrap_err();
+
+        assert!(error.contains("simulated pending verification failure"));
+        assert!(error.contains("simulated legacy token delete failure"));
+        assert_eq!(
+            *deleted.borrow(),
+            vec![
                 LEGACY_TOKEN_ACCOUNT.to_string(),
                 LEGACY_USERNAME_ACCOUNT.to_string(),
             ]
@@ -748,7 +808,7 @@ mod auth_state_tests {
     }
 
     #[test]
-    fn failed_save_cleanup_removes_new_record_even_when_legacy_cleanup_fails() {
+    fn failed_save_cleanup_preserves_pending_gate_when_legacy_cleanup_fails() {
         let mut attempted = Vec::new();
         let result = cleanup_failed_auth_save(|account| {
             attempted.push(account.to_string());
@@ -762,7 +822,6 @@ mod auth_state_tests {
         assert_eq!(
             attempted,
             vec![
-                AUTH_STATE_ACCOUNT.to_string(),
                 LEGACY_TOKEN_ACCOUNT.to_string(),
                 LEGACY_USERNAME_ACCOUNT.to_string(),
             ]
