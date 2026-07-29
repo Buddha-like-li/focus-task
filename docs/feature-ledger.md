@@ -33,7 +33,13 @@
 - 来源工作树在建立本仓库前无未提交改动，来源 SHA 为 `2e1b611`。
 - 来源工作树的已记录客户端验证包括 `npm test -- --run`（25 项）、`npm run build`、`cargo fmt --check` 与 `git diff --check`；真实 NSIS 安装包已在 Windows 构建环境产生。
 - clean-history 已完成独立索引边界扫描、Git 历史/remote 核对和客户端代码审核：25 项前端测试、production build、Rust format check、diff check 和实际 NSIS bundle 均通过。NSIS SHA-256 为 `D9F18F8D2D38112E06FFAE6FB9B23F7EB790F28FA5628F00274E88405654BF7E`。
-- 2026-07-29 已核对 GitHub remote：仅有 `refs/heads/main`；无 tag、无 Release。旧全栈 refs 不再可达。
+- 2026-07-29 发布前核对 GitHub remote：仅有 `refs/heads/main`；当时无 tag、无 Release。旧全栈 refs 不再可达。
+- `v2.3.3` Windows 验证发布已成功：GitHub Actions run `30414523317` 的签名预检、Windows
+  构建、Release notes 与 updater manifest 全部通过。公开 Release 包含
+  `Focus.Task_2.3.3_x64-setup.exe`、同名 `.sig` 与 `latest.json`；manifest 的
+  `windows-x86_64` URL 指向该 canonical 安装包。公开 `.exe` 已由客户端 updater
+  公钥和 `minisign-verify` 验证签名。详见
+  `task-records/2026-07-29-codex-v2-3-3-windows-validation-release.md`。
 
 ## 已知风险与门禁
 
@@ -41,14 +47,11 @@
 |---|---|---|
 | P0 | 旧桌面数据兼容。 | 客户端不会迁移、覆盖、备份或删除旧数据。服务端导入和 bootstrap 防护已在受控本地 `.7`/r13 交付中独立复核并运行时证明，保留 3 用户、18 任务和 61 快照；本次 Windows 验证发布的书面例外只允许安装并验证本机服务，不得宣称旧任务自动兼容，详见 `task-records/2026-07-29-codex-v2-3-3-windows-validation-release.md`。 |
 | P1 | 新客户端与本地服务的 API 契约尚需端到端验收。 | 任何服务镜像、认证、附件或数据迁移变化都要在两个仓库建立对应任务记录并联调。 |
-| P1 | GitHub updater 签名尚未通过新仓库 CI 验证。 | `TAURI_SIGNING_PRIVATE_KEY` 仅可保存在 GitHub Repository secret；私钥未加密码时不需要 `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`，不得写入临时或猜测的密码。私钥、密码均不得进入工作树、Git 历史、镜像或日志。 |
-| P1 | 本地 NSIS bundle 未生成 `.sig`。 | 尚未由新仓库 CI 验证签名产物，不能作为 updater/tag Release 证据；本地安装包验收不受影响。 |
 | P2 | `frontend.log` 还没有容量上限或轮转策略。 | 建立独立客户端修复任务后处理，并在功能总账更新结论。 |
 
 ## 发布状态
 
-- 当前版本源文件仍标记为 `2.3.3`，这仅是来源快照的应用版本，不表示本 clean-history 仓库已发布 `v2.3.3`。
-- 任何下一次 tag 必须在集成人确认版本、签名配置、独立审核和客户端/服务联调后创建；密码只在私钥加密时需要，当前尚未在新仓库 CI 验证 updater 签名。
-- 远程只保留干净客户端 `main`；源码推送不等同于已发布的安装包或 updater Release。
-- `v2.3.3` Windows 验证发布已获用户书面授权；tag 推送前的门禁、P0 测试例外和 P1 延期记录见 `task-records/2026-07-29-codex-v2-3-3-windows-validation-release.md`。
+- `v2.3.3` 已作为 Windows 本地服务验证发布；公开 Release、`.sig` 与 `latest.json` 已由 CI 成功生成，但用户安装后的登录与任务读取联调尚待记录。
+- 任何下一次 tag 必须在集成人确认版本、签名配置、独立审核和客户端/服务联调后创建；密码只在私钥加密时需要。
+- 远程分支只保留干净客户端 `main`；该客户端/服务边界不随本 Release 改变。
 - 服务镜像和可选数据卷归档均由服务仓库交付；它们永远不是本客户端 GitHub Release 的资产。

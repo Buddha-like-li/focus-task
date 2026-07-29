@@ -54,3 +54,24 @@
 - CI 成功后，核对 Release 资产、`latest.json` 的 Windows URL 与 `.sig` 是否一致。
 - 用户安装后验收本地服务连接、登录和任务读取；安装/运行日志作为后续 P1 联调证据。
 - CI 或安装失败时，在新的独立分支创建修复任务并由未参与实现者复核。
+
+## 发布执行结果（2026-07-29）
+
+- `v2.3.3` tag 已推送，指向 `abc5ff91924034a1c741906fbcb1f98d6c64e38b`。
+- GitHub Actions [run 30414523317](https://github.com/Buddha-like-li/focus-task/actions/runs/30414523317)
+  成功：签名预检、Windows desktop build、Release notes 与 updater manifest 全部通过。
+- 公开 [v2.3.3 Release](https://github.com/Buddha-like-li/focus-task/releases/tag/v2.3.3)
+  非 draft、非 prerelease，包含：
+  `Focus.Task_2.3.3_x64-setup.exe`（SHA-256
+  `09e34f62bb98fce902081befed38882fcd491e9e1bd8f861d1ab7baebc050716`）、
+  同名 `.sig` 和 `latest.json`。
+- 已通过 GitHub Release API 读取 `latest.json`：版本为 `2.3.3`，
+  `windows-x86_64` URL 指向
+  `Focus.Task_2.3.3_x64-setup.exe`，并包含非空签名。
+- 公开安装包通过 GitHub Release API 下载后 SHA-256 为
+  `09e34f62bb98fce902081befed38882fcd491e9e1bd8f861d1ab7baebc050716`，与
+  Release asset metadata 一致。使用 `tauri.conf.json` 的 updater 公钥和 Tauri
+  依赖的 `minisign-verify 0.2.5` 对该 `.exe`/`.sig` 执行独立验签，结果为通过。
+- P1 updater 签名与 manifest 验证已关闭。P1 客户端/服务端端到端联调仍待用户完成
+  安装后的登录与任务读取验证；本地 shell 对 GitHub 下载域名的直接 HTTPS 连接失败，
+  不影响 GitHub API 已验证的公开 Release 资产，浏览器下载结果应作为用户侧网络验证。

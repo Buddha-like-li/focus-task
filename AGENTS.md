@@ -13,8 +13,8 @@
 ## 当前仓库状态
 
 - 本仓库是从 `D:\工作工具\focus-task-client` 的已审核 Windows 客户端快照重建的独立仓库；旧仓库提交历史、`legacy-origin` 和服务端历史均不在本仓库可达历史中。
-- 当前集成分支是 `main`。2026-07-28 已完成独立审核并由集成人获得用户书面授权后推送源码；未打 tag、未创建 Release。
-- `origin` 只允许指向 `git@github.com:Buddha-like-li/focus-task.git`；不得配置或使用 `legacy-origin`。2026-07-29 已验证远程只保留干净客户端 `main`，详见功能总账和 clean-history 任务记录。
+- 当前集成分支是 `main`。2026-07-28 已完成独立审核并由集成人获得用户书面授权后推送源码；`v2.3.3` 已于 2026-07-29 作为 Windows 本地服务验证发布。签名/manifest 已验证，客户端/服务端端到端联调仍须按任务记录完成。
+- `origin` 只允许指向 `git@github.com:Buddha-like-li/focus-task.git`；不得配置或使用 `legacy-origin`。2026-07-29 已验证远程分支只保留干净客户端 `main`，详见功能总账和 clean-history 任务记录。
 
 ## 必须遵守的改动流程
 
