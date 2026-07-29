@@ -33,8 +33,10 @@
     </script>
   </head>
   <body>
-    <div id="app" style="padding:40px;text-align:center;color:#999;font-size:14px">
-      ⏳ 正在加载 Focus Task...
+    <!-- 加载占位样式必须写在 #app 的子元素上：Vue 挂载时只替换 innerHTML，
+         挂在 #app 上的内联样式会泄漏给整个应用。 -->
+    <div id="app">
+      <div style="padding:40px;text-align:center;color:#999;font-size:14px">⏳ 正在加载 Focus Task...</div>
     </div>
     <script type="module" src="/src/main.ts"></script>
   </body>

@@ -94,7 +94,7 @@
         <div class="axis-container">
           <!-- Top axis label -->
           <div class="axis-row-top">
-            <div class="axis-vlabel"><span>重要 →</span></div>
+            <div class="axis-vlabel"><span>重要</span></div>
             <div class="axis-sublabel-row">
               <span>紧急 ↑</span>
               <span>↓ 不紧急</span>
@@ -134,7 +134,12 @@
     </div>
 
     <!-- Context Menu -->
-    <div v-if="contextMenu.visible" class="context-menu" :style="{ left: contextMenu.x + 'px', top: contextMenu.y + 'px' }">
+    <div
+      v-if="contextMenu.visible"
+      ref="contextMenuEl"
+      class="context-menu"
+      :style="{ left: contextMenu.x + 'px', top: contextMenu.y + 'px' }"
+    >
       <div class="context-item" @click="ctxAction('edit')">
         <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" width="14" height="14"><path d="M11 2L14 5L6 13H3V10L11 2Z"/></svg>
         编辑标题
@@ -198,7 +203,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, reactive, onMounted, onUnmounted, provide } from 'vue'
+import { ref, computed, reactive, nextTick, onMounted, onUnmounted, provide } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { NModal, NCard, NButton, NProgress } from 'naive-ui'
 import { useTaskStore } from '@/stores/taskStore'
@@ -285,13 +290,30 @@ const focusSummary = computed(() => {
 
 // ─── Context Menu ───
 const contextMenu = reactive({ visible: false, x: 0, y: 0, clientId: '' })
+const contextMenuEl = ref<HTMLElement | null>(null)
+const contextMenuViewportMargin = 8
+let contextMenuRequestId = 0
+
+function clampContextMenuCoordinate(coordinate: number, menuSize: number, viewportSize: number): number {
+  const maximum = Math.max(contextMenuViewportMargin, viewportSize - menuSize - contextMenuViewportMargin)
+  return Math.max(contextMenuViewportMargin, Math.min(coordinate, maximum))
+}
 
 function showContextMenu(e: MouseEvent, clientId: string) {
   e.preventDefault()
+  const requestId = ++contextMenuRequestId
   contextMenu.visible = true
-  contextMenu.x = e.clientX
-  contextMenu.y = e.clientY
   contextMenu.clientId = clientId
+
+  // 首帧先保证点击点不会在视口外；下一帧按实际渲染出的菜单尺寸重新定位。
+  contextMenu.x = clampContextMenuCoordinate(e.clientX, 0, window.innerWidth)
+  contextMenu.y = clampContextMenuCoordinate(e.clientY, 0, window.innerHeight)
+  void nextTick(() => {
+    if (!contextMenu.visible || requestId !== contextMenuRequestId || !contextMenuEl.value) return
+    const { width, height } = contextMenuEl.value.getBoundingClientRect()
+    contextMenu.x = clampContextMenuCoordinate(e.clientX, width, window.innerWidth)
+    contextMenu.y = clampContextMenuCoordinate(e.clientY, height, window.innerHeight)
+  })
 }
 
 function hideContextMenu() {
@@ -528,7 +550,8 @@ onUnmounted(() => {
 .service-status-retry:disabled { cursor: wait; opacity: 0.7; }
 
 .matrix-area {
-  padding: 6px 16px 28px;
+  /* 底部 56px 一次给足，其中为右下角同步状态浮层预留避让空间。 */
+  padding: 6px 16px 56px;
   display: flex;
   flex-direction: column;
   flex: 1;
@@ -547,7 +570,8 @@ onUnmounted(() => {
   display: flex;
   align-items: baseline;
   gap: 8px;
-  min-width: 220px;
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 .stats-kicker-label {
   font-size: 11px;
@@ -560,7 +584,15 @@ onUnmounted(() => {
   font-size: 13px;
   color: var(--text-primary);
 }
-.stat-item { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-muted); }
+.stat-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+  white-space: nowrap;
+}
 .stat-dot { width: 7px; height: 7px; border-radius: 50%; }
 .stat-item strong { color: var(--text-secondary); font-weight: 600; }
 .progress-bar-wrap { flex: 1; height: 5px; background: var(--border-subtle); border-radius: 999px; overflow: hidden; }
@@ -573,15 +605,15 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   gap: 7px;
-  padding-bottom: 28px;
+  /* 底部留白由 .matrix-area 统一承担。 */
 }
 
 .axis-row-top {
   display: flex;
   align-items: flex-end;
-  gap: 8px;
+  /* 与 .matrix-row 一致，且不额外缩进：标签列本身占用 22px。 */
+  gap: 10px;
   flex-shrink: 0;
-  padding-left: 22px;
   height: 18px;
 }
 .axis-sublabel-row {
@@ -591,7 +623,9 @@ onUnmounted(() => {
   padding: 0 2px;
 }
 .axis-sublabel-row span { font-size: 11px; font-weight: 500; color: var(--text-muted); }
-.axis-vlabel span { font-size: 11px; font-weight: 500; color: var(--text-muted); }
+/* 与下方 .axis-vlabel-spacer 同宽，让顶部标签对准象限卡片。 */
+.axis-vlabel { width: 22px; flex-shrink: 0; overflow: visible; }
+.axis-vlabel span { font-size: 11px; font-weight: 500; color: var(--text-muted); white-space: nowrap; }
 
 .matrix-row {
   display: flex;
@@ -617,6 +651,7 @@ onUnmounted(() => {
   position: fixed; background: var(--surface); border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md); box-shadow: var(--shadow-panel);
   padding: 4px; z-index: 1000; min-width: 160px;
+  max-width: calc(100vw - 16px); max-height: calc(100vh - 16px); overflow-y: auto;
 }
 .context-item {
   display: flex; align-items: center; gap: 8px;

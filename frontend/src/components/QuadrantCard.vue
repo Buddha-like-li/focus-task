@@ -358,6 +358,8 @@ function onItemContext(e: MouseEvent, clientId: string) {
   flex-direction: column;
   overflow: hidden;
   min-height: 0;
+  /* flex 项默认 min-width:auto，长标签等不可断内容会撑破 1fr 宽度。 */
+  min-width: 0;
   flex: 1;
   transition: box-shadow var(--transition), opacity var(--transition), filter var(--transition), transform var(--transition);
 }

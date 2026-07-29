@@ -1038,6 +1038,15 @@ onBeforeUnmount(clearPreviews)
   color: var(--text-primary);
   line-height: 1.25;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* 错误信息需要读全：允许换行，不用省略号。 */
+.detail-meta-error .detail-meta-value {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  word-break: break-word;
 }
 .detail-empty {
   font-size: 14px;
@@ -1358,7 +1367,15 @@ onBeforeUnmount(clearPreviews)
   color: var(--text-muted);
   margin-bottom: 4px;
 }
-.comment-meta strong { color: var(--text-primary); font-size: 12px; }
+.comment-meta strong {
+  color: var(--text-primary);
+  font-size: 12px;
+  /* 长作者名截断，避免把“删除”按钮顶出窄面板。 */
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .comment-meta button {
   margin-left: auto;
   border: none;
@@ -1511,6 +1528,8 @@ onBeforeUnmount(clearPreviews)
 }
 .transfer-modal {
   width: min(420px, 92vw);
+  /* textarea 可纵向拖高：限制弹窗总高并让主体滚动，避免底部按钮被挤出可视区。 */
+  max-height: calc(100vh - 32px);
   background: var(--surface);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
@@ -1553,6 +1572,7 @@ onBeforeUnmount(clearPreviews)
   display: flex;
   flex-direction: column;
   gap: 12px;
+  overflow-y: auto;
 }
 .transfer-modal-body .detail-field { margin: 0; }
 .transfer-modal-body .detail-field textarea {

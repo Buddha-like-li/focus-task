@@ -10,7 +10,7 @@
     >
       <div class="sidebar-dot" :style="{ background: item.color }"></div>
       <span>{{ item.label }}</span>
-      <span class="sidebar-badge">{{ item.badge || '' }}</span>
+      <span v-if="item.badge" class="sidebar-badge">{{ item.badge }}</span>
     </div>
 
     <div class="sidebar-section-label">象限</div>
@@ -23,7 +23,7 @@
     >
       <div class="sidebar-dot" :style="{ background: q.color }"></div>
       <span>{{ q.label }}</span>
-      <span class="sidebar-badge">{{ q.badge || '' }}</span>
+      <span v-if="q.badge" class="sidebar-badge">{{ q.badge }}</span>
     </div>
 
     <div class="sidebar-section-label">需求</div>
@@ -37,7 +37,7 @@
         <path d="M5.5 5.5h5M5.5 8h5M5.5 10.5h3" stroke-linecap="round"/>
       </svg>
       <span>需求池</span>
-      <span class="sidebar-badge">{{ openRequirementCount || '' }}</span>
+      <span v-if="openRequirementCount" class="sidebar-badge">{{ openRequirementCount }}</span>
     </div>
 
     <div class="sidebar-section-label">团队</div>

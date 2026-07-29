@@ -338,12 +338,11 @@ function categoryStyle(category?: string): string {
   color: var(--text-secondary);
 }
 
-/* ─── Filter bar ─── */
+/* ─── Filter bar（间距由 .mates-page 的 gap 统一提供）─── */
 .mates-filters {
   display: flex;
   gap: 12px;
   flex-wrap: wrap;
-  margin-bottom: 4px;
 }
 
 .mates-field {
@@ -454,7 +453,6 @@ function categoryStyle(category?: string): string {
   font-size: 10px;
   padding: 1px 6px;
   border-radius: 4px;
-  margin-left: 8px;
   white-space: nowrap;
   max-width: 320px;
   overflow: hidden;

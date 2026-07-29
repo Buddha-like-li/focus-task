@@ -965,7 +965,7 @@ const periodLabel = computed(() => currentRange.value.label)
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 14px;
   min-height: 200px;
-  margin-bottom: 18px;
+  /* 底部留白由 .summary-page 的 padding 统一承担。 */
 }
 
 .highlights-panel,

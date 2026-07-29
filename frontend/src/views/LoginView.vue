@@ -124,10 +124,10 @@ onUnmounted(() => {})
 .login-page {
   height: 100vh;
   display: flex;
-  align-items: center;
-  justify-content: center;
   position: relative;
-  overflow: hidden;
+  /* 小窗口下登录卡会超过可视高度：横向裁掉装饰，纵向允许滚动。 */
+  overflow: hidden auto;
+  padding: 16px 0;
   background:
     radial-gradient(circle at 12% 18%, oklch(96% 0.025 25) 0, transparent 24%),
     radial-gradient(circle at 84% 16%, oklch(96% 0.03 145) 0, transparent 28%),
@@ -169,6 +169,8 @@ onUnmounted(() => {})
 }
 .login-card {
   width: 390px;
+  /* margin:auto 在 flex 容器中双向居中，内容超高时自然可滚动。 */
+  margin: auto;
   padding: 36px 34px 32px;
   background: oklch(100% 0 0 / 0.84);
   border-radius: 18px;

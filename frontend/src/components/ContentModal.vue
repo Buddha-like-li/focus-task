@@ -545,6 +545,7 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 12px;
   padding: 8px 18px;
   border-top: 1px solid var(--border-subtle);
   font-size: 11px;
@@ -552,7 +553,14 @@ onBeforeUnmount(() => {
   flex-shrink: 0;
 }
 .save-error { color: oklch(48% 0.18 25); font-size: 12px; }
-.footer-stats { font-family: ui-monospace, monospace; }
+/* 错误提示可能很长：截断兜底，避免把右侧统计信息顶出。 */
+.footer-hint {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.footer-stats { font-family: ui-monospace, monospace; flex-shrink: 0; }
 
 .hidden-input { display: none; }
 

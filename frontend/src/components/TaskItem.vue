@@ -72,7 +72,7 @@ function formatDate(dateStr: string) {
 .q2 .task-item.selected::before { background: var(--q2-header); }
 .q3 .task-item.selected::before { background: var(--q3-header); }
 .q4 .task-item.selected::before { background: var(--q4-header); }
-.task-item.selected { padding-left: 12px; }
+/* 选中指示仅靠 ::before 竖条；不再改 padding，避免选中/取消时行内容水平跳动。 */
 
 /* Checkbox */
 .task-checkbox {
@@ -136,7 +136,17 @@ function formatDate(dateStr: string) {
 .task-meta { display: flex; align-items: center; gap: 6px; margin-top: 2px; }
 .task-due { font-size: 12px; color: var(--text-muted); }
 .task-due.overdue { color: oklch(55% 0.18 20); font-weight: 500; }
-.task-tag { font-size: 11px; font-weight: 500; border-radius: 3px; padding: 1px 5px; }
+/* 标签文本长度不受控：限宽加省略号，避免撑破象限列宽。 */
+.task-tag {
+  font-size: 11px;
+  font-weight: 500;
+  border-radius: 3px;
+  padding: 1px 5px;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .q1 .task-tag { background: var(--q1-tag-bg); color: var(--q1-header); }
 .q2 .task-tag { background: var(--q2-tag-bg); color: var(--q2-header); }
 .q3 .task-tag { background: var(--q3-tag-bg); color: var(--q3-header); }
