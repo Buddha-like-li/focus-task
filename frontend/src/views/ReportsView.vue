@@ -103,9 +103,9 @@
               type="button"
               class="doc-icon-btn"
               :disabled="isSavingDocument(file.taskId)"
-              title="打开已下载文件所在文件夹"
-              aria-label="打开已下载文件所在文件夹"
-              @click="revealDocument(file)"
+              title="保存并打开任务文档所在文件夹"
+              aria-label="保存并打开任务文档所在文件夹"
+              @click="saveAndRevealDocument(file)"
             >
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
                 <path d="M1.75 4.5h4l1.55 1.75h7v5.9A1.35 1.35 0 0 1 11.95 13.5H3.1a1.35 1.35 0 0 1-1.35-1.35V4.5Z" stroke-linejoin="round"/>
@@ -347,7 +347,6 @@ import { toDateKey } from '@/utils/dateTime'
 import {
   reportDocumentFilename,
   reportExportFilename,
-  revealReportMarkdownFile,
   saveReportMarkdownFile,
 } from '@/utils/reportFileActions'
 import * as api from '@/api'
@@ -481,23 +480,24 @@ async function saveDocument(file: api.MarkdownFile) {
   }
 }
 
-async function revealDocument(file: api.MarkdownFile) {
+async function saveAndRevealDocument(file: api.MarkdownFile) {
   if (isSavingDocument(file.taskId)) return
   savingDocumentIds.value = new Set(savingDocumentIds.value).add(file.taskId)
   fileActionMessage.value = ''
   fileActionError.value = ''
   try {
-    const destination = await revealReportMarkdownFile(
+    const destination = await saveReportMarkdownFile(
       reportDocumentFilename(file.taskId, file.snapshotAt),
       file.markdown,
+      { reveal: true },
     )
     fileActionMessage.value = destination === 'desktop'
-      ? '已在资源管理器中定位任务文档。'
+      ? '任务文档已保存到“文档\\Focus Task\\Reports”，并已在资源管理器中定位。'
       : '浏览器已开始下载任务文档（浏览器无法直接打开所在文件夹）。'
   } catch (error) {
     fileActionError.value = error instanceof Error
       ? error.message
-      : '无法打开任务文档所在文件夹，请先下载后重试。'
+      : '无法保存并打开任务文档所在文件夹，请重试。'
   } finally {
     const next = new Set(savingDocumentIds.value)
     next.delete(file.taskId)

@@ -11,15 +11,11 @@ vi.mock('@/api', () => ({
 vi.mock('@/utils/reportFileActions', () => ({
   reportDocumentFilename: vi.fn(() => 'task-42-2026-07-21.md'),
   reportExportFilename: vi.fn(() => 'monthly-2026-07-月报.md'),
-  revealReportMarkdownFile: vi.fn(),
   saveReportMarkdownFile: vi.fn(),
 }))
 
 import * as api from '@/api'
-import {
-  revealReportMarkdownFile,
-  saveReportMarkdownFile,
-} from '@/utils/reportFileActions'
+import { saveReportMarkdownFile } from '@/utils/reportFileActions'
 import ReportsView from './ReportsView.vue'
 
 const markdownFile = {
@@ -62,7 +58,6 @@ describe('ReportsView file actions', () => {
       regenerated: false,
     })
     vi.mocked(saveReportMarkdownFile).mockResolvedValue('desktop')
-    vi.mocked(revealReportMarkdownFile).mockResolvedValue('desktop')
 
     mountPoint = document.createElement('div')
     document.body.appendChild(mountPoint)
@@ -79,7 +74,7 @@ describe('ReportsView file actions', () => {
     mountPoint = null
   })
 
-  it('uses separate save and reveal actions without forwarding the service export path', async () => {
+  it('saves and reveals the current task document without forwarding the service export path', async () => {
     await vi.waitFor(() => {
       expect(document.querySelector<HTMLButtonElement>('button[aria-label="下载到本机"]')).not.toBeNull()
     })
@@ -91,23 +86,21 @@ describe('ReportsView file actions', () => {
         '# 文档正文',
       )
     })
-    expect(revealReportMarkdownFile).not.toHaveBeenCalled()
-
     const revealButton = document.querySelector<HTMLButtonElement>(
-      'button[aria-label="打开已下载文件所在文件夹"]',
+      'button[aria-label="保存并打开任务文档所在文件夹"]',
     )!
     await vi.waitFor(() => {
       expect(revealButton.disabled).toBe(false)
     })
     revealButton.click()
     await vi.waitFor(() => {
-      expect(revealReportMarkdownFile).toHaveBeenCalledWith(
+      expect(saveReportMarkdownFile).toHaveBeenLastCalledWith(
         'task-42-2026-07-21.md',
         '# 文档正文',
+        { reveal: true },
       )
     })
     expect(JSON.stringify(vi.mocked(saveReportMarkdownFile).mock.calls)).not.toContain(markdownFile.exportPath)
-    expect(JSON.stringify(vi.mocked(revealReportMarkdownFile).mock.calls)).not.toContain(markdownFile.exportPath)
   })
 
   it('prevents duplicate report downloads while a save is pending', async () => {
