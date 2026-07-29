@@ -307,6 +307,10 @@ async function confirmPromote() {
   let converted = false
   try {
     const promotedTask = await store.promoteToTask(requirement.id, promoteQuadrant.value)
+    // Logout or account switching can finish while the request is pending.
+    // The requirement store returns null for that stale response so it cannot
+    // insert account A's task into account B's task workspace.
+    if (!promotedTask) return
     taskStore.upsertServerTask(promotedTask)
     taskStore.filterQuadrant = null
     taskStore.setView('matrix')

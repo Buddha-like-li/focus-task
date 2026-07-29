@@ -170,4 +170,30 @@ describe('RequirementsView promotion', () => {
     expect(taskStore.tasks).toEqual([])
     expect(taskStore.currentView).toBe('requirements')
   })
+
+  it('does not write an old account conversion into the next account workspace', async () => {
+    const requirement = makeRequirement({ id: 1, title: '账号 A 的需求' })
+    const { requirementStore, taskStore } = await mountView([requirement])
+    const conversion = deferred<Task>()
+    vi.mocked(api.promoteRequirement).mockReturnValueOnce(conversion.promise)
+
+    mountPoint!.querySelector<HTMLButtonElement>('.req-promote')!.click()
+    await vi.waitFor(() => {
+      expect(mountPoint?.querySelector<HTMLButtonElement>('.req-promote-confirm')).not.toBeNull()
+    })
+    mountPoint!.querySelector<HTMLButtonElement>('.req-promote-confirm')!.click()
+
+    requirementStore.clearSessionState()
+    requirementStore.requirements = [makeRequirement({ id: 2, title: '账号 B 的需求' })]
+    taskStore.clearSessionState()
+    taskStore.replaceServerTasks([makePromotedTask({ clientId: 'account-b-task', title: '账号 B 的任务' })])
+    conversion.resolve(makePromotedTask({ clientId: 'account-a-task', title: '账号 A 的任务' }))
+
+    await vi.waitFor(() => {
+      expect(requirementStore.requirements).toEqual([expect.objectContaining({ id: 2, title: '账号 B 的需求' })])
+      expect(taskStore.tasks).toEqual([expect.objectContaining({ clientId: 'account-b-task', title: '账号 B 的任务' })])
+    })
+    expect(taskStore.currentView).toBe('matrix')
+    expect(taskStore.selectedTaskId).toBeNull()
+  })
 })

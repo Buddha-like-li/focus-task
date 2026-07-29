@@ -48,6 +48,14 @@ const promotedTask = {
   deleted: false,
 } satisfies Task
 
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise
+  })
+  return { promise, resolve }
+}
+
 describe('requirementStore promotion', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
@@ -74,5 +82,20 @@ describe('requirementStore promotion', () => {
     await expect(store.promoteToTask(requirement.id, 1)).rejects.toThrow('服务不可用')
 
     expect(store.requirements).toEqual([requirement])
+  })
+
+  it('does not remove a new account requirement when an old conversion completes', async () => {
+    const store = useRequirementStore()
+    const conversion = deferred<Task>()
+    vi.mocked(api.promoteRequirement).mockReturnValueOnce(conversion.promise)
+    store.requirements = [makeRequirement({ id: 1, title: '账号 A 的需求' })]
+
+    const pending = store.promoteToTask(1, 1)
+    store.clearSessionState()
+    store.requirements = [makeRequirement({ id: 2, title: '账号 B 的需求' })]
+    conversion.resolve(promotedTask)
+
+    await expect(pending).resolves.toBeNull()
+    expect(store.requirements).toEqual([expect.objectContaining({ id: 2, title: '账号 B 的需求' })])
   })
 })
