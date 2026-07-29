@@ -40,6 +40,14 @@ function makeTask(overrides: Partial<Task> = {}): Task {
   }
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>(resolvePromise => {
+    resolve = resolvePromise
+  })
+  return { promise, resolve }
+}
+
 describe('DetailPanel task belonging', () => {
   let app: ReturnType<typeof createApp> | null = null
   let mountPoint: HTMLDivElement | null = null
@@ -95,7 +103,7 @@ describe('DetailPanel task belonging', () => {
     const selected = makeTask()
     const { taskStore, input } = await mountDetailPanel([
       selected,
-      makeTask({ id: 2, clientId: 'custom-task', taskBelonging: '客户专项' }),
+      makeTask({ id: 2, clientId: 'custom-task', taskBelonging: '  客户专项  ' }),
     ])
     vi.spyOn(taskStore, 'updateTask').mockImplementation(async (_clientId, updates) => {
       Object.assign(taskStore.tasks[0]!, updates)
@@ -110,6 +118,7 @@ describe('DetailPanel task belonging', () => {
     expect(input.maxLength).toBe(100)
     expect(suggestions).toContain('项目管理')
     expect(suggestions).toContain('客户专项')
+    expect(suggestions).not.toContain('  客户专项  ')
 
     input.value = '  新建归属  '
     input.dispatchEvent(new Event('change', { bubbles: true }))
@@ -120,7 +129,7 @@ describe('DetailPanel task belonging', () => {
     expect(input.value).toBe('新建归属')
   })
 
-  it('saves the default belonging when the user clears the field or enters whitespace', async () => {
+  it('saves the default belonging when the user clears the field', async () => {
     const { taskStore, input } = await mountDetailPanel([makeTask({ taskBelonging: '客户专项' })])
     vi.spyOn(taskStore, 'updateTask').mockImplementation(async (_clientId, updates) => {
       Object.assign(taskStore.tasks[0]!, updates)
@@ -134,14 +143,21 @@ describe('DetailPanel task belonging', () => {
       expect(taskStore.updateTask).toHaveBeenCalledWith('selected-task', { taskBelonging: '项目管理' })
     })
     expect(input.value).toBe('项目管理')
+  })
+
+  it('saves the default belonging when the user enters whitespace', async () => {
+    const { taskStore, input } = await mountDetailPanel([makeTask({ taskBelonging: '客户专项' })])
+    vi.spyOn(taskStore, 'updateTask').mockImplementation(async (_clientId, updates) => {
+      Object.assign(taskStore.tasks[0]!, updates)
+      return true
+    })
 
     input.value = '   '
     input.dispatchEvent(new Event('change', { bubbles: true }))
 
     await vi.waitFor(() => {
-      expect(taskStore.updateTask).toHaveBeenCalledTimes(2)
+      expect(taskStore.updateTask).toHaveBeenCalledWith('selected-task', { taskBelonging: '项目管理' })
     })
-    expect(taskStore.updateTask).toHaveBeenLastCalledWith('selected-task', { taskBelonging: '项目管理' })
     expect(input.value).toBe('项目管理')
   })
 
@@ -157,5 +173,47 @@ describe('DetailPanel task belonging', () => {
       expect(mountPoint?.querySelector('[role="alert"]')?.textContent).toContain('本地服务暂时不可用')
     })
     expect(input.value).toBe('已保存归属')
+  })
+
+  it('serializes rapid changes so a failed earlier save cannot overwrite the later value', async () => {
+    const { taskStore, input } = await mountDetailPanel([makeTask({ taskBelonging: '初始归属' })])
+    const firstSave = deferred<boolean>()
+    const secondSave = deferred<boolean>()
+    vi.spyOn(taskStore, 'updateTask')
+      .mockImplementationOnce(() => firstSave.promise)
+      .mockImplementationOnce((_clientId, updates) => {
+        Object.assign(taskStore.tasks[0]!, updates)
+        return secondSave.promise
+      })
+
+    input.value = '第一次归属'
+    input.dispatchEvent(new Event('change', { bubbles: true }))
+
+    await vi.waitFor(() => {
+      expect(taskStore.updateTask).toHaveBeenCalledTimes(1)
+      expect(input.disabled).toBe(true)
+    })
+
+    // 真实用户会因 disabled 无法再次输入；这里主动派发第二个变更事件，验证
+    // 极短时间内的连续事件也会排队，不会产生并发乐观更新。
+    input.value = '第二次归属'
+    input.dispatchEvent(new Event('change', { bubbles: true }))
+    expect(taskStore.updateTask).toHaveBeenCalledTimes(1)
+
+    taskStore.serviceError = '第一次保存失败'
+    firstSave.resolve(false)
+
+    await vi.waitFor(() => {
+      expect(taskStore.updateTask).toHaveBeenCalledTimes(2)
+      expect(taskStore.updateTask).toHaveBeenLastCalledWith('selected-task', { taskBelonging: '第二次归属' })
+    })
+
+    secondSave.resolve(true)
+
+    await vi.waitFor(() => {
+      expect(input.disabled).toBe(false)
+      expect(input.value).toBe('第二次归属')
+      expect(mountPoint?.querySelector('[role="alert"]')).toBeNull()
+    })
   })
 })

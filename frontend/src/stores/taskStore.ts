@@ -59,7 +59,7 @@ export const useTaskStore = defineStore('tasks', () => {
       notifyOnStart: task.notifyOnStart ?? true,
       notifyOnDue: task.notifyOnDue ?? true,
       notifyOnOverdue: task.notifyOnOverdue ?? true,
-      taskBelonging: task.taskBelonging || '项目管理',
+      taskBelonging: (task.taskBelonging ?? '').trim() || '项目管理',
       category: task.category || '需求',
       owner: task.owner || '唐星',
       source: task.source || '开发自测',
