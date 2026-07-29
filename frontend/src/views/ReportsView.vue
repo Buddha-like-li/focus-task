@@ -56,8 +56,8 @@
           <button class="docs-btn" :disabled="exporting || !filesResponse?.files.length" @click="handleExport(false)">
             {{ exportInfo ? '重新生成' : '导出报告' }}
           </button>
-          <button v-if="exportInfo" class="docs-btn docs-btn-ghost" :disabled="exporting" @click="downloadReport">
-            下载 {{ exportInfo.reportFilename }}
+          <button v-if="exportInfo" class="docs-btn docs-btn-ghost" :disabled="exporting || savingReport" @click="downloadReport">
+            {{ savingReport ? '保存中…' : `下载 ${exportInfo.reportFilename}` }}
           </button>
         </div>
       </section>
@@ -65,6 +65,8 @@
       <p v-if="exportInfo" class="export-meta">
         已生成：{{ formatExportTime(exportInfo.generatedAt) }} · {{ exportInfo.taskCount }} 个任务
       </p>
+      <p v-if="fileActionMessage" class="file-action-message" role="status">{{ fileActionMessage }}</p>
+      <p v-if="fileActionError" class="file-action-error" role="alert">{{ fileActionError }}</p>
 
       <section v-if="loadingFiles" class="docs-loading">加载中…</section>
       <section v-else-if="filesError" class="docs-error">{{ filesError }}</section>
@@ -79,10 +81,35 @@
             <span class="doc-row-reason">{{ reasonLabel(file.snapshotReason) }}</span>
           </div>
           <div class="doc-row-actions">
-            <button class="doc-icon-btn" title="预览文档" @click="openPreview(file)">
+            <button type="button" class="doc-icon-btn" title="预览文档" aria-label="预览文档" @click="openPreview(file)">
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
                 <path d="M1.5 8S4 3 8 3s6.5 5 6.5 5-2.5 5-6.5 5-6.5-5-6.5-5Z"/>
                 <circle cx="8" cy="8" r="2"/>
+              </svg>
+            </button>
+            <button
+              type="button"
+              class="doc-icon-btn"
+              :disabled="isSavingDocument(file.taskId)"
+              title="下载到本机"
+              aria-label="下载到本机"
+              @click="saveDocument(file)"
+            >
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+                <path d="M8 2v8M4.75 7.5 8 10.75 11.25 7.5M2.5 13.25h11" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </button>
+            <button
+              type="button"
+              class="doc-icon-btn"
+              :disabled="isSavingDocument(file.taskId)"
+              title="打开已下载文件所在文件夹"
+              aria-label="打开已下载文件所在文件夹"
+              @click="revealDocument(file)"
+            >
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+                <path d="M1.75 4.5h4l1.55 1.75h7v5.9A1.35 1.35 0 0 1 11.95 13.5H3.1a1.35 1.35 0 0 1-1.35-1.35V4.5Z" stroke-linejoin="round"/>
+                <path d="M1.75 6.25h11.5" stroke-linecap="round"/>
               </svg>
             </button>
           </div>
@@ -317,6 +344,12 @@ import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { marked } from 'marked'
 import { useTaskStore } from '@/stores/taskStore'
 import { toDateKey } from '@/utils/dateTime'
+import {
+  reportDocumentFilename,
+  reportExportFilename,
+  revealReportMarkdownFile,
+  saveReportMarkdownFile,
+} from '@/utils/reportFileActions'
 import * as api from '@/api'
 
 // ─── Tab switch ───
@@ -333,6 +366,10 @@ const filesResponse = ref<api.MarkdownFilesResponse | null>(null)
 const exporting = ref(false)
 const exportInfo = ref<api.ReportExportResponse | null>(null)
 const lastReportText = ref('')
+const savingReport = ref(false)
+const savingDocumentIds = ref<Set<number>>(new Set())
+const fileActionMessage = ref('')
+const fileActionError = ref('')
 
 const periodOptions = [
   { label: '日报', value: 'daily' as const },
@@ -350,6 +387,8 @@ async function fetchFiles() {
   filesError.value = ''
   exportInfo.value = null
   lastReportText.value = ''
+  fileActionMessage.value = ''
+  fileActionError.value = ''
   try {
     filesResponse.value = await api.getReportMarkdownFiles(periodMode.value, undefined, offset.value)
   } catch (error) {
@@ -375,6 +414,8 @@ function shiftPeriod(delta: number) {
 async function handleExport(regenerate: boolean) {
   if (!filesResponse.value) return
   exporting.value = true
+  fileActionMessage.value = ''
+  fileActionError.value = ''
   try {
     const res = await api.exportReport({
       period: periodMode.value,
@@ -390,15 +431,78 @@ async function handleExport(regenerate: boolean) {
   }
 }
 
-function downloadReport() {
-  if (!exportInfo.value || !lastReportText.value) return
-  const blob = new Blob([lastReportText.value], { type: 'text/markdown;charset=utf-8' })
-  const url = URL.createObjectURL(blob)
-  const link = document.createElement('a')
-  link.href = url
-  link.download = exportInfo.value.reportFilename
-  link.click()
-  URL.revokeObjectURL(url)
+async function downloadReport() {
+  if (savingReport.value || !exportInfo.value || !lastReportText.value) return
+  savingReport.value = true
+  fileActionMessage.value = ''
+  fileActionError.value = ''
+  try {
+    const filename = reportExportFilename(
+      exportInfo.value.period,
+      exportInfo.value.anchor,
+      exportInfo.value.reportFilename,
+    )
+    const destination = await saveReportMarkdownFile(filename, lastReportText.value, { reveal: true })
+    fileActionMessage.value = destination === 'desktop'
+      ? '报告已保存到“文档\\Focus Task\\Reports”，并已在资源管理器中定位。'
+      : '浏览器已开始下载报告。'
+  } catch (error) {
+    fileActionError.value = error instanceof Error ? error.message : '报告下载失败，请重试。'
+  } finally {
+    savingReport.value = false
+  }
+}
+
+function isSavingDocument(taskId: number): boolean {
+  return savingDocumentIds.value.has(taskId)
+}
+
+async function saveDocument(file: api.MarkdownFile) {
+  if (isSavingDocument(file.taskId)) return
+  savingDocumentIds.value = new Set(savingDocumentIds.value).add(file.taskId)
+  fileActionMessage.value = ''
+  fileActionError.value = ''
+  try {
+    const destination = await saveReportMarkdownFile(
+      reportDocumentFilename(file.taskId, file.snapshotAt),
+      file.markdown,
+    )
+    if (destination === 'desktop') {
+      fileActionMessage.value = '任务文档已保存到“文档\\Focus Task\\Reports”。'
+    } else {
+      fileActionMessage.value = '浏览器已开始下载任务文档。'
+    }
+  } catch (error) {
+    fileActionError.value = error instanceof Error ? error.message : '任务文档下载失败，请重试。'
+  } finally {
+    const next = new Set(savingDocumentIds.value)
+    next.delete(file.taskId)
+    savingDocumentIds.value = next
+  }
+}
+
+async function revealDocument(file: api.MarkdownFile) {
+  if (isSavingDocument(file.taskId)) return
+  savingDocumentIds.value = new Set(savingDocumentIds.value).add(file.taskId)
+  fileActionMessage.value = ''
+  fileActionError.value = ''
+  try {
+    const destination = await revealReportMarkdownFile(
+      reportDocumentFilename(file.taskId, file.snapshotAt),
+      file.markdown,
+    )
+    fileActionMessage.value = destination === 'desktop'
+      ? '已在资源管理器中定位任务文档。'
+      : '浏览器已开始下载任务文档（浏览器无法直接打开所在文件夹）。'
+  } catch (error) {
+    fileActionError.value = error instanceof Error
+      ? error.message
+      : '无法打开任务文档所在文件夹，请先下载后重试。'
+  } finally {
+    const next = new Set(savingDocumentIds.value)
+    next.delete(file.taskId)
+    savingDocumentIds.value = next
+  }
 }
 
 function renderMarkdown(md: string): string {
@@ -1141,6 +1245,20 @@ onUnmounted(() => {
   background: oklch(94% 0.01 240);
   color: var(--text-primary);
 }
+
+.doc-icon-btn:disabled {
+  cursor: wait;
+  opacity: 0.55;
+}
+
+.file-action-message,
+.file-action-error {
+  margin: -4px 0 10px;
+  font-size: 12px;
+}
+
+.file-action-message { color: oklch(42% 0.12 145); }
+.file-action-error { color: oklch(48% 0.18 25); }
 
 /* ─── Preview modal ─── */
 .md-preview-overlay {
