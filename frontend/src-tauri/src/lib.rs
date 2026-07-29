@@ -95,6 +95,23 @@ where
     delete(AUTH_STATE_ACCOUNT)
 }
 
+fn cleanup_failed_auth_save<F>(mut delete: F) -> Result<(), String>
+where
+    F: FnMut(&str) -> Result<(), String>,
+{
+    // Save failure has different semantics from a manual logout: no previous
+    // session may revive after restart. Attempt the new record first and keep
+    // attempting both legacy records even if any deletion reports an error.
+    clear_accounts(
+        &[
+            AUTH_STATE_ACCOUNT,
+            LEGACY_TOKEN_ACCOUNT,
+            LEGACY_USERNAME_ACCOUNT,
+        ],
+        |account| delete(account),
+    )
+}
+
 fn load_legacy_auth_state() -> Result<Option<AuthState>, String> {
     let token = read_credential(LEGACY_TOKEN_ACCOUNT)?;
     let username = read_credential(LEGACY_USERNAME_ACCOUNT)?;
@@ -145,10 +162,10 @@ fn save_auth_state(state: AuthState) -> Result<(), String> {
     })();
 
     if let Err(error) = save_result {
-        // A failed write must not leave a recoverable partial session. Cleanup
-        // preserves a current atomic session if legacy deletion fails, so a
-        // later launch cannot fall back to an older legacy token.
-        return match clear_auth_state() {
+        // A failed write must not leave any recoverable session. This cleanup
+        // intentionally differs from manual logout and removes auth_state
+        // before attempting the legacy records.
+        return match cleanup_failed_auth_save(delete_credential) {
             Ok(()) => Err(error),
             Err(cleanup_error) => Err(format!("{error}；清理失败：{cleanup_error}")),
         };
@@ -529,5 +546,30 @@ mod auth_state_tests {
                 AUTH_STATE_ACCOUNT.to_string(),
             ]
         );
+    }
+
+    #[test]
+    fn failed_save_cleanup_removes_new_record_even_when_legacy_cleanup_fails() {
+        let mut attempted = Vec::new();
+        let result = cleanup_failed_auth_save(|account| {
+            attempted.push(account.to_string());
+            if account == LEGACY_TOKEN_ACCOUNT {
+                Err("simulated legacy delete failure".to_string())
+            } else {
+                Ok(())
+            }
+        });
+
+        assert_eq!(
+            attempted,
+            vec![
+                AUTH_STATE_ACCOUNT.to_string(),
+                LEGACY_TOKEN_ACCOUNT.to_string(),
+                LEGACY_USERNAME_ACCOUNT.to_string(),
+            ]
+        );
+        let error = result.unwrap_err();
+        assert!(error.contains(LEGACY_TOKEN_ACCOUNT));
+        assert!(error.contains("simulated legacy delete failure"));
     }
 }

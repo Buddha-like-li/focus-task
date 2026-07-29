@@ -41,8 +41,8 @@ describe('stored service session validation', () => {
     expect(auth.token).toBe('')
     expect(auth.username).toBe('')
     expect(auth.userId).toBeNull()
-    expect(api.setAuthToken).toHaveBeenNthCalledWith(1, 'legacy-embedded-token')
-    expect(api.setAuthToken).toHaveBeenLastCalledWith(null)
+    expect(api.setAuthToken).toHaveBeenNthCalledWith(1, 'legacy-embedded-token', expect.any(Number))
+    expect(api.setAuthToken).toHaveBeenLastCalledWith(null, expect.any(Number))
     expect(clearAuthState).toHaveBeenCalledTimes(1)
   })
 
@@ -70,7 +70,7 @@ describe('stored service session validation', () => {
     expect(auth.ready).toBe(true)
     expect(auth.isLoggedIn).toBe(false)
     expect(auth.token).toBe('')
-    expect(api.setAuthToken).toHaveBeenLastCalledWith(null)
+    expect(api.setAuthToken).toHaveBeenLastCalledWith(null, expect.any(Number))
   })
 
   it('shows a safe restore error instead of treating a Credential Manager read failure as logout', async () => {
@@ -82,7 +82,7 @@ describe('stored service session validation', () => {
     expect(auth.ready).toBe(true)
     expect(auth.isLoggedIn).toBe(false)
     expect(auth.restoreError).toBe('无法读取已保存的登录状态，请检查 Windows 凭据管理器后重试。')
-    expect(api.setAuthToken).toHaveBeenLastCalledWith(null)
+    expect(api.setAuthToken).toHaveBeenLastCalledWith(null, expect.any(Number))
   })
 
   it('rejects login when the fresh token is immediately rejected by the service', async () => {
@@ -97,6 +97,27 @@ describe('stored service session validation', () => {
     expect(auth.isLoggedIn).toBe(false)
     expect(auth.token).toBe('')
     expect(clearAuthState).toHaveBeenCalledTimes(1)
+  })
+
+  it('ignores a delayed account A authentication failure after logout and account B login', async () => {
+    vi.mocked(api.login)
+      .mockResolvedValueOnce({ accessToken: 'token-a' })
+      .mockResolvedValueOnce({ accessToken: 'token-b' })
+    vi.mocked(api.getMe)
+      .mockResolvedValueOnce({ id: 1, username: 'alice', createdAt: '' })
+      .mockResolvedValueOnce({ id: 2, username: 'bob', createdAt: '' })
+
+    const auth = useAuthStore()
+    await auth.login('alice', 'password')
+    const delayedAContext = { token: 'token-a', sessionRevision: auth.sessionRevision }
+
+    await auth.logout()
+    await auth.login('bob', 'password')
+
+    await expect(auth.invalidateSessionIfCurrent(delayedAContext)).resolves.toBe(false)
+    expect(auth.isLoggedIn).toBe(true)
+    expect(auth.token).toBe('token-b')
+    expect(auth.username).toBe('bob')
   })
 
   it('clears persisted credentials and account-specific state before switching accounts', async () => {
@@ -151,7 +172,7 @@ describe('stored service session validation', () => {
     expect(requirementStore.requirements).toEqual([])
     expect(teamStore.team).toBeNull()
     expect(teamStore.members).toEqual([])
-    expect(api.setAuthToken).toHaveBeenLastCalledWith(null)
+    expect(api.setAuthToken).toHaveBeenLastCalledWith(null, expect.any(Number))
   })
 
   it('keeps the active account when persisted credentials cannot be cleared', async () => {

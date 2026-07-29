@@ -21,11 +21,17 @@ export interface TaskAttachment {
 
 const API_BASE = LOCAL_SERVICE_API_BASE
 
-// Global auth-expiry hook. Set by the app shell so the API layer can trigger a
-// redirect to the login page without a circular import (api -> store -> api).
-let authExpiredHandler: (() => void) | null = null
+export interface AuthRequestContext {
+  token: string
+  sessionRevision: number | null
+}
 
-export function onAuthExpired(handler: (() => void) | null) {
+// Global auth-expiry hook. Every request supplies the token and session
+// revision captured before fetch, so an old account's delayed 401 cannot
+// invalidate a newer session after an account switch.
+let authExpiredHandler: ((context: AuthRequestContext) => void | Promise<void>) | null = null
+
+export function onAuthExpired(handler: ((context: AuthRequestContext) => void | Promise<void>) | null) {
   authExpiredHandler = handler
 }
 
@@ -33,6 +39,7 @@ export function onAuthExpired(handler: (() => void) | null) {
 // request uses the newly-issued token before Windows Credential Manager is
 // queried again.
 let inMemoryToken: string | null = null
+let inMemorySessionRevision: number | null = null
 
 export class ApiRequestError extends Error {
   readonly status: number
@@ -44,17 +51,29 @@ export class ApiRequestError extends Error {
   }
 }
 
-export function setAuthToken(token: string | null) {
+export function setAuthToken(token: string | null, sessionRevision: number | null = null) {
   inMemoryToken = token
+  inMemorySessionRevision = token ? sessionRevision : null
 }
 
 export function isAuthenticationFailure(error: unknown): boolean {
   return error instanceof ApiRequestError && (error.status === 401 || error.status === 403)
 }
 
-async function getAuthToken(): Promise<string> {
-  if (inMemoryToken) return inMemoryToken
-  return (await loadAuthState()).token
+async function getAuthContext(): Promise<AuthRequestContext> {
+  if (inMemoryToken) {
+    return { token: inMemoryToken, sessionRevision: inMemorySessionRevision }
+  }
+
+  const state = await loadAuthState()
+  return { token: state.token, sessionRevision: null }
+}
+
+function notifyAuthExpired(context: AuthRequestContext) {
+  if (!context.token || context.sessionRevision === null || !authExpiredHandler) return
+  void Promise.resolve(authExpiredHandler(context)).catch((error) => {
+    appLogger.warn('[认证] 处理登录失效失败', error)
+  })
 }
 
 function isAuthError(status: number, detail: string): boolean {
@@ -149,7 +168,8 @@ async function request(method: string, path: string, body?: any, extraHeaders: R
   // Login and registration establish a session, so they must remain usable
   // when reading an old Credential Manager entry failed during startup.
   const isAuthEndpoint = path.startsWith('/api/auth/login') || path.startsWith('/api/auth/register')
-  const token = isAuthEndpoint ? '' : await getAuthToken()
+  const authContext = isAuthEndpoint ? null : await getAuthContext()
+  const token = authContext?.token || ''
   if (token) headers['Authorization'] = `Bearer ${token}`
 
   let res: Response
@@ -169,8 +189,8 @@ async function request(method: string, path: string, body?: any, extraHeaders: R
     const detail = typeof err?.detail === 'string' ? err.detail : ''
     // A 401 on the login/register endpoints is a wrong-credentials error, not
     // a session-expiry event -- don't trigger the auth-expired redirect.
-    if (!isAuthEndpoint && isAuthError(res.status, detail) && authExpiredHandler) {
-      authExpiredHandler()
+    if (!isAuthEndpoint && isAuthError(res.status, detail) && authContext) {
+      notifyAuthExpired(authContext)
     }
     // Keep non-auth API failures in frontend.log with the service detail.
     if (res.status !== 401) {
@@ -184,7 +204,8 @@ async function request(method: string, path: string, body?: any, extraHeaders: R
 
 async function attachmentRequest(path: string, options: RequestInit = {}): Promise<Response> {
   const headers = new Headers(options.headers)
-  const token = await getAuthToken()
+  const authContext = await getAuthContext()
+  const token = authContext.token
   if (token) headers.set('Authorization', `Bearer ${token}`)
 
   let response: Response
@@ -197,8 +218,8 @@ async function attachmentRequest(path: string, options: RequestInit = {}): Promi
   if (!response.ok) {
     const error = await response.json().catch(() => ({}))
     const detail = typeof error?.detail === 'string' ? error.detail : ''
-    if (isAuthError(response.status, detail) && authExpiredHandler) {
-      authExpiredHandler()
+    if (isAuthError(response.status, detail)) {
+      notifyAuthExpired(authContext)
     }
     throw new ApiRequestError(formatApiError(error) || response.statusText, response.status)
   }

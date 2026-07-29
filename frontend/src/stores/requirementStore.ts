@@ -38,19 +38,25 @@ export const useRequirementStore = defineStore('requirements', () => {
   }
 
   async function add(input: RequirementInput): Promise<Requirement> {
+    const requestRevision = sessionRevision
     const created = await createRequirement(input)
+    if (!isCurrentSession(requestRevision)) return created
     requirements.value = [created, ...requirements.value]
     return created
   }
 
   async function update(id: number, input: RequirementInput): Promise<Requirement> {
+    const requestRevision = sessionRevision
     const updated = await updateRequirement(id, input)
+    if (!isCurrentSession(requestRevision)) return updated
     requirements.value = requirements.value.map(item => (item.id === id ? updated : item))
     return updated
   }
 
   async function remove(id: number): Promise<void> {
+    const requestRevision = sessionRevision
     await deleteRequirement(id)
+    if (!isCurrentSession(requestRevision)) return
     requirements.value = requirements.value.filter(item => item.id !== id)
   }
 
@@ -60,6 +66,10 @@ export const useRequirementStore = defineStore('requirements', () => {
     requirements.value = []
     error.value = ''
     loading.value = false
+  }
+
+  function isCurrentSession(requestRevision: number): boolean {
+    return requestRevision === sessionRevision
   }
 
   return { requirements, loading, error, fetchAll, add, update, remove, clearSessionState }

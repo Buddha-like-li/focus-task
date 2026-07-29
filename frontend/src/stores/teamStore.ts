@@ -71,7 +71,9 @@ export const useTeamStore = defineStore('team', () => {
   }
 
   async function createTeam(name: string) {
+    const requestRevision = sessionRevision
     const t = await api.createTeam(name)
+    if (!isCurrentSession(requestRevision)) return t
     team.value = t
     members.value = t.members
     // Creating a team makes the creator a manager - refresh the auth role.
@@ -81,14 +83,18 @@ export const useTeamStore = defineStore('team', () => {
   }
 
   async function updateTeamName(name: string) {
+    const requestRevision = sessionRevision
     if (!team.value) return
     const t = await api.updateTeam(name)
+    if (!isCurrentSession(requestRevision)) return
     team.value = t
     members.value = t.members
   }
 
   async function dissolveTeam() {
+    const requestRevision = sessionRevision
     await api.dissolveTeam()
+    if (!isCurrentSession(requestRevision)) return
     team.value = null
     members.value = []
     const auth = useAuthStore()
@@ -96,13 +102,17 @@ export const useTeamStore = defineStore('team', () => {
   }
 
   async function inviteMember(username: string, role: string) {
+    const requestRevision = sessionRevision
     const m = await api.inviteTeamMember(username, role)
+    if (!isCurrentSession(requestRevision)) return m
     members.value = [...members.value, m]
     return m
   }
 
   async function updateMemberRole(userId: number, role: string) {
+    const requestRevision = sessionRevision
     await api.updateTeamMemberRole(userId, role)
+    if (!isCurrentSession(requestRevision)) return
     members.value = members.value.map(m =>
       m.userId === userId ? { ...m, role } : m
     )
@@ -111,7 +121,9 @@ export const useTeamStore = defineStore('team', () => {
   }
 
   async function removeMember(userId: number) {
+    const requestRevision = sessionRevision
     await api.removeTeamMember(userId)
+    if (!isCurrentSession(requestRevision)) return
     members.value = members.value.filter(m => m.userId !== userId)
     const auth = useAuthStore()
     if (userId === auth.userId) auth.role = ''
@@ -125,9 +137,15 @@ export const useTeamStore = defineStore('team', () => {
     loading.value = false
   }
 
+  function isCurrentSession(requestRevision: number): boolean {
+    return requestRevision === sessionRevision
+  }
+
   /** Read-only listing of a teammate's tasks (P6-3 队友任务视图). */
   async function fetchMemberTasks(userId: number, filters: api.MemberTasksFilters = {}): Promise<Task[]> {
-    return api.listMemberTasks(userId, filters)
+    const requestRevision = sessionRevision
+    const tasks = await api.listMemberTasks(userId, filters)
+    return isCurrentSession(requestRevision) ? tasks : []
   }
 
   return {

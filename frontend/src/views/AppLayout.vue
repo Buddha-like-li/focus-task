@@ -364,9 +364,10 @@ onMounted(() => {
   // When any API call gets a 401/403 (token expired or missing from keyring),
   // log out and send the user back to the login page instead of leaving them
   // staring at silent failures.
-  api.onAuthExpired(async () => {
-    await auth.invalidateSession()
-    router.replace('/login')
+  api.onAuthExpired(async (context) => {
+    if (await auth.invalidateSessionIfCurrent(context)) {
+      router.replace('/login')
+    }
   })
 
   // The Windows client talks directly to the local Focus Task service. A failed
