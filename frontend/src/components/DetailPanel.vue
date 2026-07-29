@@ -49,9 +49,19 @@
       <div class="detail-field-grid">
         <div class="detail-field">
           <label>任务归属</label>
-          <select :value="task.taskBelonging" :disabled="readonly" @change="updateField('taskBelonging', ($event.target as HTMLSelectElement).value)">
-            <option v-for="option in taskBelongingOptions" :key="option" :value="option">{{ option }}</option>
-          </select>
+          <input
+            data-testid="task-belonging-input"
+            type="text"
+            list="task-belonging-options"
+            :value="task.taskBelonging"
+            :disabled="readonly"
+            maxlength="100"
+            placeholder="输入或选择任务归属"
+            @change="updateField('taskBelonging', ($event.target as HTMLInputElement).value)"
+          />
+          <datalist id="task-belonging-options">
+            <option v-for="option in taskBelongingSuggestions" :key="option" :value="option" />
+          </datalist>
         </div>
         <div class="detail-field">
           <label>类别</label>
@@ -350,6 +360,18 @@ const uploading = ref(false)
 const attachmentError = ref('')
 const contentModalOpen = ref(false)
 const taskBelongingOptions = ['数据预处理', 'AI网格员-Fastgpt工作流版本', 'AI网格员-Fastgpt智能体版本', 'AI网格员-中移版本', '城运中心', '三流一体化', '项目管理', '公文', '数据预处理平台', 'AI网格员-连小警版本', '桌面RPA']
+// 归属既可以从常用建议中选择，也允许录入服务端支持的自定义文本。保留任务
+// 列表中已有的自定义值，避免用户下次编辑时找不到此前使用过的归属。
+const taskBelongingSuggestions = computed(() => {
+  const suggestions = new Set(taskBelongingOptions)
+  const addSuggestion = (value: string | undefined) => {
+    if (value) suggestions.add(value)
+  }
+
+  store.activeTasks.forEach(item => addSuggestion(item.taskBelonging))
+  addSuggestion(task.value?.taskBelonging)
+  return [...suggestions]
+})
 const categoryOptions = ['需求', 'bug', '研究']
 // P6-1: when the user is in a team, drive the owner dropdown from team
 // members; otherwise fall back to the legacy hardcoded list (desktop
