@@ -233,14 +233,24 @@
     </section>
 
     <!-- Update modal (FT-07) -->
-    <n-modal v-model:show="showUpdateModal">
+    <n-modal
+      v-model:show="showUpdateModal"
+      :mask-closable="!installingUpdate"
+      :close-on-esc="!installingUpdate"
+    >
       <n-card style="max-width: 460px" :title="`新版本 ${updateInfo.version || ''}`" :bordered="false">
         <p class="update-body">{{ updateInfo.body || '点击「立即更新」将下载并自动安装。' }}</p>
-        <n-progress v-if="downloadProgress > 0 && downloadProgress < 100" type="line" :percentage="downloadProgress" />
+        <p v-if="installingUpdate && installStatus" class="update-status" role="status" aria-live="polite">
+          {{ installStatus }}
+        </p>
+        <n-progress v-if="installingUpdate && downloadProgress > 0 && downloadProgress < 100" type="line" :percentage="downloadProgress" />
+        <p v-if="installError || updateError" class="update-error" role="alert">{{ installError || updateError }}</p>
         <template #footer>
           <div class="permission-actions">
-            <button class="secondary-btn" @click="showUpdateModal = false">稍后</button>
-            <button class="primary-btn" :disabled="installingUpdate" @click="installUpdate">立即更新</button>
+            <button class="secondary-btn" :disabled="installingUpdate" @click="showUpdateModal = false">稍后</button>
+            <button class="primary-btn" :disabled="installingUpdate" :aria-busy="installingUpdate" @click="installUpdate">
+              {{ installingUpdate ? installStatus || '正在更新…' : '立即更新' }}
+            </button>
           </div>
         </template>
       </n-card>
@@ -252,7 +262,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { NModal, NCard, NProgress } from 'naive-ui'
 import { useSettingsStore, type ReminderLeadMinutes } from '@/stores/settingsStore'
-import { formatUpdateError, useAppUpdate } from '@/composables/useAppUpdate'
+import { formatInstallPhase, formatUpdateError, useAppUpdate } from '@/composables/useAppUpdate'
 import { useTeamStore } from '@/stores/teamStore'
 import { useAuthStore } from '@/stores/authStore'
 import { isTauriRuntime } from '@/utils/platform'
@@ -267,6 +277,8 @@ const {
   checking: checkingUpdate,
   installing: installingUpdate,
   lastChecked,
+  installPhase,
+  installError,
   checkForUpdate,
   downloadAndInstall,
 } = useAppUpdate()
@@ -276,6 +288,7 @@ const appVersion = ref('0.1.0')
 // FT-07 update modal state
 const showUpdateModal = ref(false)
 const updateError = ref('')
+const installStatus = computed(() => formatInstallPhase(installPhase.value))
 
 // P6 team card state
 const newTeamName = ref('')
@@ -448,13 +461,16 @@ async function handleCheckUpdate() {
 }
 
 async function installUpdate() {
+  // A retry must not leave the prior failure visible while a new native
+  // download is already in progress.
+  updateError.value = ''
   try {
     await downloadAndInstall()
   } catch (err: any) {
     appLogger.error('[update] installUpdate surfaced to user', {
       message: err?.message || '更新失败',
     })
-    updateError.value = err?.message || '更新失败'
+    updateError.value = installError.value || formatUpdateError(err, '更新')
   }
 }
 

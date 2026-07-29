@@ -1,11 +1,11 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import type { DownloadEvent, Update } from '@tauri-apps/plugin-updater'
 
-vi.mock('@/utils/platform', () => ({
+const mocks = vi.hoisted(() => ({
   isTauriRuntime: vi.fn(),
-}))
-
-vi.mock('@/composables/useAppLogger', () => ({
-  appLogger: {
+  check: vi.fn(),
+  relaunch: vi.fn(),
+  logger: {
     debug: vi.fn(),
     info: vi.fn(),
     warn: vi.fn(),
@@ -14,102 +14,180 @@ vi.mock('@/composables/useAppLogger', () => ({
   },
 }))
 
-vi.mock('@tauri-apps/plugin-updater', () => ({
-  check: vi.fn(),
+vi.mock('@/utils/platform', () => ({
+  isTauriRuntime: mocks.isTauriRuntime,
 }))
 
-import { isTauriRuntime } from '@/utils/platform'
-import { appLogger } from '@/composables/useAppLogger'
-import { check } from '@tauri-apps/plugin-updater'
-import {
-  formatUpdateError,
-  SILENT_UPDATE_CHECK_TIMEOUT_MS,
-  useAppUpdate,
-} from './useAppUpdate'
+vi.mock('@/composables/useAppLogger', () => ({
+  appLogger: mocks.logger,
+}))
+
+vi.mock('@tauri-apps/plugin-updater', () => ({
+  check: mocks.check,
+}))
+
+vi.mock('@tauri-apps/plugin-process', () => ({
+  relaunch: mocks.relaunch,
+}))
+
+type UpdaterModule = typeof import('./useAppUpdate')
+
+let updater: UpdaterModule
 
 function deferred<T>() {
   let resolve!: (value: T) => void
-  const promise = new Promise<T>(innerResolve => {
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<T>((innerResolve, innerReject) => {
     resolve = innerResolve
+    reject = innerReject
   })
-  return { promise, resolve }
+  return { promise, resolve, reject }
+}
+
+function updateResource(overrides: Partial<Update> = {}): Update {
+  return {
+    version: '2.3.5',
+    body: 'Release notes',
+    date: '2026-07-29T00:00:00.000Z',
+    downloadAndInstall: vi.fn().mockResolvedValue(undefined),
+    close: vi.fn().mockResolvedValue(undefined),
+    ...overrides,
+  } as unknown as Update
 }
 
 describe('useAppUpdate', () => {
-  beforeEach(() => {
-    vi.useFakeTimers()
+  beforeEach(async () => {
     vi.clearAllMocks()
-    vi.mocked(isTauriRuntime).mockReturnValue(true)
+    vi.resetModules()
+    mocks.isTauriRuntime.mockReturnValue(true)
+    updater = await import('./useAppUpdate')
   })
 
-  afterEach(() => {
-    vi.useRealTimers()
-  })
-
-  it('quietly ends a silent check after 15 seconds without marking it current', async () => {
-    const pending = deferred<null>()
-    vi.mocked(check).mockReturnValue(pending.promise)
-    const { checkForUpdate, checking, lastChecked, updateInfo } = useAppUpdate()
+  it('does not let a pending silent check occupy the manual checking state', async () => {
+    const pending = deferred<Update | null>()
+    mocks.check.mockReturnValueOnce(pending.promise)
+    const { checkForUpdate, checking, lastChecked } = updater.useAppUpdate()
 
     const result = checkForUpdate({ silent: true })
-    await vi.advanceTimersByTimeAsync(0)
-    expect(check).toHaveBeenCalledTimes(1)
-    await vi.advanceTimersByTimeAsync(SILENT_UPDATE_CHECK_TIMEOUT_MS)
-
-    await expect(result).resolves.toBeNull()
-    expect(checking.value).toBe(false)
-    expect(lastChecked.value).toBeNull()
-    expect(updateInfo.value).toEqual({ version: '', body: '' })
-    expect(appLogger.warn).toHaveBeenCalledWith('[update] silent check timed out', {
-      timeoutMs: SILENT_UPDATE_CHECK_TIMEOUT_MS,
+    await vi.waitFor(() => {
+      expect(mocks.check).toHaveBeenCalledWith({ timeout: updater.UPDATE_CHECK_TIMEOUT_MS })
     })
 
-    pending.resolve(null)
-    await pending.promise
-    await Promise.resolve()
-  })
-
-  it('does not apply the silent timeout to a manual check', async () => {
-    const pending = deferred<null>()
-    vi.mocked(check).mockReturnValue(pending.promise)
-    const { checkForUpdate, checking } = useAppUpdate()
-
-    const result = checkForUpdate()
-    await vi.advanceTimersByTimeAsync(0)
-    expect(check).toHaveBeenCalledTimes(1)
-    await vi.advanceTimersByTimeAsync(SILENT_UPDATE_CHECK_TIMEOUT_MS)
-
-    expect(checking.value).toBe(true)
-    expect(appLogger.warn).not.toHaveBeenCalled()
+    expect(checking.value).toBe(false)
+    expect(lastChecked.value).toBeNull()
 
     pending.resolve(null)
     await expect(result).resolves.toBeNull()
-    await pending.promise
-    await Promise.resolve()
+    expect(checking.value).toBe(false)
   })
 
-  it('reuses the pending updater check when a manual check follows a silent timeout', async () => {
-    const pending = deferred<null>()
-    vi.mocked(check).mockReturnValue(pending.promise)
-    const { checkForUpdate, checking } = useAppUpdate()
+  it('starts a fresh manual native check after a silent check times out', async () => {
+    const manualPending = deferred<Update | null>()
+    mocks.check
+      .mockRejectedValueOnce(new Error('request timed out'))
+      .mockReturnValueOnce(manualPending.promise)
+    const { checkForUpdate, checking, lastChecked } = updater.useAppUpdate()
 
-    const silentResult = checkForUpdate({ silent: true })
-    await vi.advanceTimersByTimeAsync(0)
-    expect(check).toHaveBeenCalledTimes(1)
-    await vi.advanceTimersByTimeAsync(SILENT_UPDATE_CHECK_TIMEOUT_MS)
-    await expect(silentResult).resolves.toBeNull()
+    await expect(checkForUpdate({ silent: true })).resolves.toBeNull()
     expect(checking.value).toBe(false)
+    expect(lastChecked.value).toBeNull()
+    expect(mocks.logger.warn).toHaveBeenCalledWith(
+      '[update] silent check timed out',
+      { timeoutMs: updater.SILENT_UPDATE_CHECK_TIMEOUT_MS },
+      { persist: true },
+    )
 
     const manualResult = checkForUpdate()
-    await vi.advanceTimersByTimeAsync(0)
-    expect(check).toHaveBeenCalledTimes(1)
+    await vi.waitFor(() => {
+      expect(mocks.check).toHaveBeenCalledTimes(2)
+    })
+    expect(mocks.check).toHaveBeenLastCalledWith({ timeout: updater.UPDATE_CHECK_TIMEOUT_MS })
     expect(checking.value).toBe(true)
-
-    pending.resolve(null)
+    manualPending.resolve(null)
     await expect(manualResult).resolves.toBeNull()
     expect(checking.value).toBe(false)
-    await pending.promise
-    await Promise.resolve()
+  })
+
+  it('reuses the Update resource from a successful check instead of checking again', async () => {
+    const update = updateResource()
+    mocks.check.mockResolvedValueOnce(update)
+    const { checkForUpdate, downloadAndInstall } = updater.useAppUpdate()
+
+    await expect(checkForUpdate()).resolves.toEqual({
+      version: '2.3.5',
+      body: 'Release notes',
+      date: '2026-07-29T00:00:00.000Z',
+    })
+    await downloadAndInstall()
+
+    expect(mocks.check).toHaveBeenCalledTimes(1)
+    expect(update.downloadAndInstall).toHaveBeenCalledWith(
+      expect.any(Function),
+      { timeout: updater.UPDATE_DOWNLOAD_TIMEOUT_MS },
+    )
+    expect(mocks.relaunch).toHaveBeenCalledTimes(1)
+    expect(update.close).toHaveBeenCalledTimes(1)
+    expect(mocks.logger.info).toHaveBeenCalledWith(
+      '[update] install start',
+      { version: '2.3.5' },
+      { persist: true },
+    )
+  })
+
+  it('accumulates updater chunk lengths against Started.contentLength', async () => {
+    const completion = deferred<void>()
+    let onEvent: ((event: DownloadEvent) => void) | undefined
+    const update = updateResource({
+      downloadAndInstall: vi.fn((callback: (event: DownloadEvent) => void) => {
+        onEvent = callback
+        return completion.promise
+      }),
+    })
+    mocks.check.mockResolvedValueOnce(update)
+    const { checkForUpdate, downloadAndInstall, downloadProgress, installPhase } = updater.useAppUpdate()
+
+    await checkForUpdate()
+    const installation = downloadAndInstall()
+    const duplicateInstallation = downloadAndInstall()
+    expect(duplicateInstallation).toBe(installation)
+    await vi.waitFor(() => {
+      expect(onEvent).toBeTypeOf('function')
+    })
+
+    onEvent?.({ event: 'Started', data: { contentLength: 1_000 } })
+    onEvent?.({ event: 'Progress', data: { chunkLength: 100 } })
+    onEvent?.({ event: 'Progress', data: { chunkLength: 250 } })
+    expect(downloadProgress.value).toBe(35)
+    expect(installPhase.value).toBe('downloading')
+
+    onEvent?.({ event: 'Finished' })
+    expect(installPhase.value).toBe('installing')
+    completion.resolve()
+    await installation
+    expect(update.downloadAndInstall).toHaveBeenCalledTimes(1)
+    expect(downloadProgress.value).toBe(100)
+    expect(installPhase.value).toBe('relaunching')
+  })
+
+  it('surfaces and persists an install failure with its phase', async () => {
+    const failure = new Error('connection refused')
+    const update = updateResource({
+      downloadAndInstall: vi.fn().mockRejectedValue(failure),
+    })
+    mocks.check.mockResolvedValueOnce(update)
+    const { checkForUpdate, downloadAndInstall, installing, installPhase, installError } = updater.useAppUpdate()
+
+    await checkForUpdate()
+    await expect(downloadAndInstall()).rejects.toBe(failure)
+
+    expect(installing.value).toBe(false)
+    expect(installPhase.value).toBe('failed')
+    expect(installError.value).toContain('GitHub')
+    expect(mocks.logger.error).toHaveBeenCalledWith(
+      '[update] install failed during downloading',
+      failure,
+      { persist: true },
+    )
   })
 
   it.each([
@@ -117,9 +195,7 @@ describe('useAppUpdate', () => {
     'Failed to fetch',
     'error sending request for url',
     'connection refused',
-  ])('formats common network error as an actionable Chinese message: %s', message => {
-    expect(formatUpdateError(new Error(message))).toBe(
-      '检查更新失败：网络无法访问 GitHub（请检查代理或网络）',
-    )
+  ])('formats common network error as an actionable message: %s', message => {
+    expect(updater.formatUpdateError(new Error(message))).toContain('GitHub')
   })
 })

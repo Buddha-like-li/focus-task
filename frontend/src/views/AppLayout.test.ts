@@ -10,10 +10,13 @@ vi.mock('@/api', () => ({
 }))
 
 vi.mock('@/composables/useAppUpdate', () => ({
+  formatInstallPhase: vi.fn(() => ''),
   useAppUpdate: () => ({
     updateInfo: {},
     downloadProgress: 0,
     installing: false,
+    installPhase: { value: 'idle' },
+    installError: '',
     checkForUpdate: vi.fn(),
     downloadAndInstall: vi.fn(),
   }),

@@ -171,15 +171,25 @@
     </div>
 
     <!-- Update dialog (FT-07) -->
-    <n-modal v-model:show="showUpdateDialog">
+    <n-modal
+      v-model:show="showUpdateDialog"
+      :mask-closable="!installingUpdate"
+      :close-on-esc="!installingUpdate"
+    >
       <n-card style="max-width: 460px" :title="`新版本 ${updateInfo.version || ''}`" :bordered="false">
         <p v-if="updateInfo.body" class="update-body">{{ updateInfo.body }}</p>
         <p v-else class="update-body">点击「立即更新」将下载并自动安装。</p>
-        <n-progress v-if="downloadProgress > 0 && downloadProgress < 100" type="line" :percentage="downloadProgress" />
+        <p v-if="installingUpdate && installStatus" class="update-status" role="status" aria-live="polite">
+          {{ installStatus }}
+        </p>
+        <n-progress v-if="installingUpdate && downloadProgress > 0 && downloadProgress < 100" type="line" :percentage="downloadProgress" />
+        <p v-if="installError" class="update-error" role="alert">{{ installError }}</p>
         <template #footer>
           <div class="modal-actions">
-            <n-button @click="showUpdateDialog = false">稍后</n-button>
-            <n-button type="primary" :loading="installingUpdate" @click="installUpdate">立即更新</n-button>
+            <n-button :disabled="installingUpdate" @click="showUpdateDialog = false">稍后</n-button>
+            <n-button type="primary" :loading="installingUpdate" :disabled="installingUpdate" @click="installUpdate">
+              {{ installingUpdate ? installStatus || '正在更新…' : '立即更新' }}
+            </n-button>
           </div>
         </template>
       </n-card>
@@ -194,7 +204,7 @@ import { NModal, NCard, NButton, NProgress } from 'naive-ui'
 import { useTaskStore } from '@/stores/taskStore'
 import { useAuthStore } from '@/stores/authStore'
 import { useRequirementStore } from '@/stores/requirementStore'
-import { useAppUpdate } from '@/composables/useAppUpdate'
+import { formatInstallPhase, useAppUpdate } from '@/composables/useAppUpdate'
 import { isTauriRuntime } from '@/utils/platform'
 import { appLogger } from '@/composables/useAppLogger'
 import * as api from '@/api'
@@ -324,11 +334,14 @@ const {
   updateInfo,
   downloadProgress,
   installing: installingUpdate,
+  installPhase,
+  installError,
   checkForUpdate,
   downloadAndInstall,
 } = useAppUpdate()
 const showUpdateDialog = ref(false)
 const updateBadgeVisible = ref(false)
+const installStatus = computed(() => formatInstallPhase(installPhase.value))
 
 function openUpdateDialog() {
   showUpdateDialog.value = true
@@ -339,7 +352,7 @@ async function installUpdate() {
     await downloadAndInstall()
   } catch (err) {
     // The Tauri updater logs the failure; the modal can stay open for retry.
-    appLogger.error('[update] AppLayout installUpdate failed', err)
+    appLogger.error('[update] AppLayout installUpdate failed', err, { persist: true })
   }
 }
 
