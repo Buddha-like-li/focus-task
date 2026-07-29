@@ -78,7 +78,7 @@ function deferred<T>() {
   return { promise, resolve }
 }
 
-describe('RequirementsView promotion', () => {
+describe('RequirementsView', () => {
   let app: ReturnType<typeof createApp> | null = null
   let mountPoint: HTMLDivElement | null = null
   let pinia: Pinia
@@ -115,6 +115,25 @@ describe('RequirementsView promotion', () => {
     return { requirementStore, taskStore }
   }
 
+  it('keeps the linked-task entry inline and does not open the editor when expanded', async () => {
+    const requirement = makeRequirement({ linkedTaskCount: 1 })
+    await mountView([requirement])
+    vi.mocked(api.listRequirementTasks).mockResolvedValueOnce([])
+
+    const meta = mountPoint!.querySelector('.req-card-meta')
+    const toggle = meta?.querySelector<HTMLButtonElement>('.req-linked-toggle')
+    expect(meta?.querySelector('.req-card-time')).not.toBeNull()
+    expect(toggle).not.toBeNull()
+
+    toggle!.click()
+
+    await vi.waitFor(() => {
+      expect(api.listRequirementTasks).toHaveBeenCalledWith(requirement.id)
+      expect(mountPoint?.querySelector('.req-linked-body')).not.toBeNull()
+    })
+    expect(mountPoint?.querySelector('.modal-stub')).toBeNull()
+  })
+
   it('converts a requirement through the service, writes its task, and opens it in the matrix', async () => {
     const requirement = makeRequirement()
     const { requirementStore, taskStore } = await mountView([requirement])
@@ -139,6 +158,8 @@ describe('RequirementsView promotion', () => {
       expect(api.promoteRequirement).toHaveBeenCalledTimes(1)
       expect(api.promoteRequirement).toHaveBeenCalledWith(requirement.id, 2)
       expect(confirm.disabled).toBe(true)
+      expect(mountPoint?.querySelector<HTMLButtonElement>('.req-promote')?.disabled).toBe(true)
+      expect(mountPoint?.querySelector<HTMLButtonElement>('.req-delete')?.disabled).toBe(true)
     })
 
     promotion.resolve(promotedTask)

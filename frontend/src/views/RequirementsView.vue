@@ -33,30 +33,30 @@
             </span>
           </div>
           <p v-if="req.content" class="req-card-excerpt">{{ excerpt(req.content) }}</p>
-          <span class="req-card-time">更新于 {{ formatTime(req.updatedAt) }}</span>
-
-          <!-- 关联任务区块（P5-2）-->
-          <div class="req-linked" @click.stop>
+          <div class="req-card-meta">
+            <span class="req-card-time">更新于 {{ formatTime(req.updatedAt) }}</span>
+            <span class="req-meta-dot" aria-hidden="true">·</span>
+            <!-- 关联任务折叠入口内联在元信息行，收起时不额外占高度。 -->
             <button
               class="req-linked-toggle"
               :class="{ expanded: expandedReqId === req.id }"
-              @click="toggleLinked(req.id)"
+              @click.stop="toggleLinked(req.id)"
             >
               <span class="req-linked-caret">{{ expandedReqId === req.id ? '▾' : '▸' }}</span>
               关联任务 ({{ req.linkedTaskCount ?? 0 }})
             </button>
-            <div v-if="expandedReqId === req.id" class="req-linked-body">
-              <p v-if="linkedLoading" class="req-linked-hint">加载中…</p>
-              <p v-else-if="linkedTasks.length === 0" class="req-linked-hint">暂无关联任务</p>
-              <ul v-else class="req-linked-list">
-                <li v-for="task in linkedTasks" :key="task.clientId">
-                  <span class="req-linked-title" :title="task.title">{{ task.title || '未命名任务' }}</span>
-                  <span class="req-linked-cat" :style="categoryStyle(task.category)">{{ task.category || '需求' }}</span>
-                  <span class="req-linked-status" :style="statusBadgeStyle(task.status)">{{ task.status || '未开始' }}</span>
-                  <button class="req-linked-jump" title="在矩阵中查看" @click="jumpToTask(task.clientId)">跳转</button>
-                </li>
-              </ul>
-            </div>
+          </div>
+          <div v-if="expandedReqId === req.id" class="req-linked-body" @click.stop>
+            <p v-if="linkedLoading" class="req-linked-hint">加载中…</p>
+            <p v-else-if="linkedTasks.length === 0" class="req-linked-hint">暂无关联任务</p>
+            <ul v-else class="req-linked-list">
+              <li v-for="task in linkedTasks" :key="task.clientId">
+                <span class="req-linked-title" :title="task.title">{{ task.title || '未命名任务' }}</span>
+                <span class="req-linked-cat" :style="categoryStyle(task.category)">{{ task.category || '需求' }}</span>
+                <span class="req-linked-status" :style="statusBadgeStyle(task.status)">{{ task.status || '未开始' }}</span>
+                <button class="req-linked-jump" title="在矩阵中查看" @click="jumpToTask(task.clientId)">跳转</button>
+              </li>
+            </ul>
           </div>
         </div>
         <div class="req-card-side">
@@ -511,7 +511,14 @@ function statusBadgeStyle(status?: string) {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.req-card-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 2px;
+}
 .req-card-time { font-size: 12px; color: var(--text-muted); }
+.req-meta-dot { font-size: 12px; color: var(--text-muted); }
 .req-card-side { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
 .req-badge {
   font-size: 12px;
@@ -566,11 +573,6 @@ function statusBadgeStyle(status?: string) {
   line-height: 1.5;
 }
 
-.req-linked {
-  margin-top: 8px;
-  border-top: 1px dashed var(--border-subtle);
-  padding-top: 6px;
-}
 .req-linked-toggle {
   display: inline-flex;
   align-items: center;
@@ -580,19 +582,25 @@ function statusBadgeStyle(status?: string) {
   font: inherit;
   font-size: 12px;
   font-weight: 500;
-  color: var(--text-secondary);
+  color: var(--text-muted);
   cursor: pointer;
-  padding: 2px 0;
+  padding: 0;
   border-radius: var(--radius-sm);
 }
-.req-linked-toggle:hover { color: var(--text-primary); }
+.req-linked-toggle:hover,
+.req-linked-toggle.expanded { color: var(--text-primary); }
 .req-linked-caret {
   display: inline-block;
   width: 10px;
   font-size: 10px;
   color: var(--text-muted);
 }
-.req-linked-body { margin-top: 4px; }
+/* 展开时才出现分隔线，收起时关联入口只占元信息行的一处内联位置。 */
+.req-linked-body {
+  margin-top: 8px;
+  border-top: 1px dashed var(--border-subtle);
+  padding-top: 8px;
+}
 .req-linked-hint {
   font-size: 12px;
   color: var(--text-muted);
