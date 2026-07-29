@@ -113,6 +113,13 @@ export const useTeamStore = defineStore('team', () => {
     if (userId === auth.userId) auth.role = ''
   }
 
+  /** Remove team data from the prior account before another user signs in. */
+  function clearSessionState() {
+    team.value = null
+    members.value = []
+    loading.value = false
+  }
+
   /** Read-only listing of a teammate's tasks (P6-3 队友任务视图). */
   async function fetchMemberTasks(userId: number, filters: api.MemberTasksFilters = {}): Promise<Task[]> {
     return api.listMemberTasks(userId, filters)
@@ -136,6 +143,7 @@ export const useTeamStore = defineStore('team', () => {
     inviteMember,
     updateMemberRole,
     removeMember,
+    clearSessionState,
     fetchMemberTasks,
   }
 })

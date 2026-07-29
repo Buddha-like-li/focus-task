@@ -92,6 +92,17 @@ export const useTaskStore = defineStore('tasks', () => {
     }
   }
 
+  /** Remove account-specific task data before another user signs in. */
+  function clearSessionState() {
+    tasks.value = []
+    selectedTaskId.value = null
+    searchQuery.value = ''
+    filterQuadrant.value = null
+    serviceError.value = ''
+    loading.value = false
+    currentView.value = 'matrix'
+  }
+
   const activeTasks = computed(() => tasks.value.filter(task => !task.deleted))
   const selectedTask = computed(() =>
     activeTasks.value.find(task => task.clientId === selectedTaskId.value) || null,
@@ -247,6 +258,7 @@ export const useTaskStore = defineStore('tasks', () => {
     doneTasks,
     filterQuadrant,
     replaceServerTasks,
+    clearSessionState,
     fetchTasks,
     addTask,
     updateTask,

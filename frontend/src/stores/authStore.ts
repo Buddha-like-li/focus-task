@@ -83,18 +83,71 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   async function logout() {
+    // A user-initiated logout must clear the persisted token first. If
+    // Credential Manager rejects the deletion, leave the active session in
+    // place and show the actionable error instead of making account switching
+    // appear successful only until the next launch.
+    await clearAuthState()
+    resetSession()
+    await clearAccountScopedState()
+  }
+
+  /**
+   * End an unusable session after the local service rejects its token.
+   * Unlike a user-requested logout, a keyring cleanup failure must not leave
+   * the application on an authenticated screen with an expired token.
+   */
+  async function invalidateSession() {
     await clearSession()
   }
 
-  async function clearSession() {
+  function resetSession() {
     token.value = ''
     username.value = ''
     userId.value = null
     role.value = ''
     isLoggedIn.value = false
     api.setAuthToken(null)
-    await clearAuthState()
   }
 
-  return { token, username, userId, role, isLoggedIn, ready, init, register, login, logout, refreshIdentity }
+  async function clearSession() {
+    resetSession()
+    await clearAccountScopedState()
+    try {
+      await clearAuthState()
+    } catch {
+      // An expired or invalid token must not keep the UI authenticated. The
+      // secure-storage layer has already recorded the native failure; retry
+      // cleanup on the next app start if Windows Credential Manager recovers.
+    }
+  }
+
+  async function clearAccountScopedState() {
+    // Keep these imports lazy: teamStore depends on authStore to derive the
+    // active member role, so importing it at module evaluation time creates a
+    // circular dependency. All stores share the active Pinia instance.
+    const [{ useTaskStore }, { useRequirementStore }, { useTeamStore }] = await Promise.all([
+      import('@/stores/taskStore'),
+      import('@/stores/requirementStore'),
+      import('@/stores/teamStore'),
+    ])
+    useTaskStore().clearSessionState()
+    useRequirementStore().clearSessionState()
+    useTeamStore().clearSessionState()
+  }
+
+  return {
+    token,
+    username,
+    userId,
+    role,
+    isLoggedIn,
+    ready,
+    init,
+    register,
+    login,
+    logout,
+    invalidateSession,
+    refreshIdentity,
+  }
 })

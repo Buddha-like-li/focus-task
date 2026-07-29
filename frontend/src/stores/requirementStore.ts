@@ -49,5 +49,12 @@ export const useRequirementStore = defineStore('requirements', () => {
     requirements.value = requirements.value.filter(item => item.id !== id)
   }
 
-  return { requirements, loading, error, fetchAll, add, update, remove }
+  /** Remove requirements from the prior account before another user signs in. */
+  function clearSessionState() {
+    requirements.value = []
+    error.value = ''
+    loading.value = false
+  }
+
+  return { requirements, loading, error, fetchAll, add, update, remove, clearSessionState }
 })

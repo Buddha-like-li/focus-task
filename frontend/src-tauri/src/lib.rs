@@ -12,7 +12,7 @@ const TOKEN_ACCOUNT: &str = "auth_token";
 const USERNAME_ACCOUNT: &str = "auth_username";
 const REPORT_EXPORT_DIRECTORY: [&str; 2] = ["Focus Task", "Reports"];
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, PartialEq, Eq)]
 struct AuthState {
     token: String,
     username: String,
@@ -49,13 +49,26 @@ fn load_auth_state() -> Result<Option<AuthState>, String> {
 
 #[tauri::command]
 fn save_auth_state(state: AuthState) -> Result<(), String> {
-    keyring_entry(TOKEN_ACCOUNT)?
-        .set_password(&state.token)
-        .map_err(|err| err.to_string())?;
-    keyring_entry(USERNAME_ACCOUNT)?
-        .set_password(&state.username)
-        .map_err(|err| err.to_string())?;
-    Ok(())
+    let save_result = (|| {
+        keyring_entry(TOKEN_ACCOUNT)?
+            .set_password(&state.token)
+            .map_err(|err| err.to_string())?;
+        keyring_entry(USERNAME_ACCOUNT)?
+            .set_password(&state.username)
+            .map_err(|err| err.to_string())?;
+
+        match load_auth_state()? {
+            Some(saved) if saved == state => Ok(()),
+            _ => Err("Windows Credential Manager did not retain the saved session".to_string()),
+        }
+    })();
+
+    if save_result.is_err() {
+        // Do not leave a partial token or username behind when a two-record
+        // Credential Manager write cannot be verified.
+        let _ = clear_auth_state();
+    }
+    save_result
 }
 
 #[tauri::command]

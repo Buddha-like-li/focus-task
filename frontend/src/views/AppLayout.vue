@@ -365,7 +365,7 @@ onMounted(() => {
   // log out and send the user back to the login page instead of leaving them
   // staring at silent failures.
   api.onAuthExpired(async () => {
-    await auth.logout()
+    await auth.invalidateSession()
     router.replace('/login')
   })
 
