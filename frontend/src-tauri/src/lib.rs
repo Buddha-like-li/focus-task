@@ -155,8 +155,8 @@ fn save_auth_state(state: AuthState) -> Result<(), String> {
     }
 
     // The new record contains token and username atomically. Legacy cleanup is
-    // best effort after a verified save; a later logout still attempts every
-    // account so an unavailable old record cannot short-circuit deletion.
+    // best effort after a verified save; later logout starts with both legacy
+    // records and deliberately preserves auth_state if that cleanup is incomplete.
     let _ = clear_legacy_auth_state();
     Ok(())
 }
