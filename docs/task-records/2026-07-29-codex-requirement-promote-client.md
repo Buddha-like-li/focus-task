@@ -15,12 +15,12 @@
 | 当前重放基线 SHA | `2791b86e0636cb23e777b63bae4989573beec3ac` |
 | 功能分支 | `codex/requirement-promote-client` |
 | 实现者 | `task_belonging_impl` |
-| 审核者 | 待集成人指定 |
+| 审核者 | `requirement_promote_client_review`（未参与实现） |
 | 集成人 | `/root` |
 | 实现 SHA | `60df6051092f5aaa75b692b61bfbac3488d6b870` |
 | 会话隔离修复 SHA | `97b8f7bf6b7a73d6647e7aef19a98fc14f4fa83c` |
-| 审核 SHA | 待独立审核后填写 |
-| 对应服务任务 | `codex/requirement-promote-api`，服务实现 `8b1dbb5c5b1e7dd3f89e8feff96e8680947fa93e`，生命周期修复 `6475d40892b302a6319e5e52b47aa7991b27c184` 已由独立审核者批准；服务集成仍待执行 |
+| 审核 SHA | `97b8f7bf6b7a73d6647e7aef19a98fc14f4fa83c`（独立审核对象；审核未产生代码提交） |
+| 对应服务任务 | `codex/requirement-promote-api`，服务实现 `8b1dbb5c5b1e7dd3f89e8feff96e8680947fa93e`，生命周期修复 `6475d40892b302a6319e5e52b47aa7991b27c184`；已通过 `1e3c01005b90b5de5f74b83f1e60f304ae7a0700` 合入本地服务并完成隔离 HTTP 联调 |
 
 ## 客户端设计
 
@@ -45,7 +45,9 @@
 
 ### 独立审核
 
-- 待集成人指定未参与实现的客户端审核者；服务端审核必须独立完成，不得以本客户端测试替代。
+- `requirement_promote_client_review` 独立审查 `60df6051092f5aaa75b692b61bfbac3488d6b870` 与 `97b8f7bf6b7a73d6647e7aef19a98fc14f4fa83c`，未发现 P0/P1/P2 实现缺陷，批准客户端代码合入。
+- 审核确认客户端只发送 `{ quadrant }` 至服务原子转换接口；成功且仍为当前会话才移除需求，旧账号的延迟响应不会插入新账号任务或切换新账号视图；错误保留需求并使用中文可重试提示。
+- 审核复跑 API、store、视图定向测试 15/15、前端全量测试 72/72、`npm run build` 与 `git diff --check` 均通过。服务端独立审核与本地临时容器 HTTP 联调由对应服务任务记录承载。
 
 ### 修复复核
 
@@ -61,4 +63,4 @@
 
 ### 集成
 
-- 仅集成人可在客户端独立审核、服务端独立审核和本地服务镜像端到端联调完成后，更新功能总账、合入、推送或发布。
+- 客户端独立审核、服务端独立审核和本地服务镜像隔离 HTTP 联调均已完成；集成人将在合入客户端 `main` 后回填集成 SHA、更新功能总账，并按版本发布任务执行 Windows 构建和推送。
