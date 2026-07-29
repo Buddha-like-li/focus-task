@@ -204,6 +204,25 @@
         </div>
       </article>
 
+      <article class="settings-card account-card">
+        <div class="card-head">
+          <div>
+            <span class="card-kicker">账号</span>
+            <h2>当前登录</h2>
+          </div>
+        </div>
+        <div class="account-body">
+          <p class="account-username">{{ auth.username }}</p>
+          <p class="field-note">退出后可使用其他账号登录，本地任务数据不会被删除。</p>
+          <div class="permission-actions">
+            <button class="danger-btn account-logout-btn" :disabled="loggingOut" @click="handleLogout">
+              {{ loggingOut ? '正在退出…' : '退出登录' }}
+            </button>
+          </div>
+          <p v-if="logoutError" class="field-note account-error" role="alert">{{ logoutError }}</p>
+        </div>
+      </article>
+
       <article class="settings-card">
         <div class="card-head">
           <div>
@@ -260,6 +279,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { NModal, NCard, NProgress } from 'naive-ui'
 import { useSettingsStore, type ReminderLeadMinutes } from '@/stores/settingsStore'
 import { formatInstallPhase, formatUpdateError, useAppUpdate } from '@/composables/useAppUpdate'
@@ -271,6 +291,7 @@ import { appLogger } from '@/composables/useAppLogger'
 const settings = useSettingsStore()
 const teamStore = useTeamStore()
 const auth = useAuthStore()
+const router = useRouter()
 const {
   updateInfo,
   downloadProgress,
@@ -289,6 +310,8 @@ const appVersion = ref('0.1.0')
 const showUpdateModal = ref(false)
 const updateError = ref('')
 const installStatus = computed(() => formatInstallPhase(installPhase.value))
+const loggingOut = ref(false)
+const logoutError = ref('')
 
 // P6 team card state
 const newTeamName = ref('')
@@ -396,6 +419,22 @@ async function handleDissolve() {
     await teamStore.dissolveTeam()
   } catch (err: any) {
     inviteError.value = err?.message || '解散团队失败'
+  }
+}
+
+async function handleLogout() {
+  if (loggingOut.value) return
+
+  loggingOut.value = true
+  logoutError.value = ''
+  try {
+    await auth.logout()
+    await router.replace('/login')
+  } catch (error) {
+    logoutError.value = error instanceof Error ? error.message : '退出登录失败，请稍后重试。'
+    appLogger.error('[认证] 退出登录失败', error)
+  } finally {
+    loggingOut.value = false
   }
 }
 
@@ -890,6 +929,35 @@ onMounted(async () => {
   height: 34px;
   padding: 0 14px;
   font-size: 13px;
+}
+
+/* ─── Account session ─── */
+.account-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.account-username {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+.account-logout-btn {
+  height: 34px;
+  padding: 0 14px;
+  font-size: 13px;
+}
+
+.account-logout-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.account-error {
+  color: oklch(52% 0.16 25);
 }
 
 </style>

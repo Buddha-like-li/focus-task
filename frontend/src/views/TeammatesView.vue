@@ -116,7 +116,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useTeamStore } from '@/stores/teamStore'
 import { useAuthStore } from '@/stores/authStore'
@@ -140,6 +140,7 @@ const selectedUserId = ref<number | null>(null)
 const filters = ref<FilterState>({ quadrant: null, status: null, category: null })
 const tasks = ref<Task[]>([])
 const loading = ref(false)
+let taskRequestRevision = 0
 
 // 下拉只列其他队友（排除当前用户），队友任务视图是看"别人"的。
 const teammateOptions = computed(() =>
@@ -155,29 +156,51 @@ function buildFilters(): { quadrant?: number; status?: string; category?: string
 }
 
 async function loadTasks() {
+  const requestRevision = ++taskRequestRevision
+  const sessionRevision = auth.sessionRevision
+  const isCurrentRequest = () => (
+    requestRevision === taskRequestRevision && sessionRevision === auth.sessionRevision
+  )
+
   if (!teamStore.hasTeam || !teamStore.isInTeam) {
-    tasks.value = []
+    if (isCurrentRequest()) {
+      tasks.value = []
+      loading.value = false
+    }
     return
   }
   loading.value = true
   try {
     const f = buildFilters()
     if (selectedUserId.value != null) {
-      tasks.value = await teamStore.fetchMemberTasks(selectedUserId.value, f)
+      const loaded = await teamStore.fetchMemberTasks(selectedUserId.value, f)
+      if (!isCurrentRequest()) return
+      tasks.value = loaded
     } else {
       // 全部队友：并发拉取后合并。排除自己。
       const targets = teammateOptions.value.map(m => m.userId)
       const results = await Promise.all(
         targets.map(uid => teamStore.fetchMemberTasks(uid, f).catch(() => [] as Task[]))
       )
+      if (!isCurrentRequest()) return
       tasks.value = results.flat()
     }
   } catch {
+    if (!isCurrentRequest()) return
     tasks.value = []
   } finally {
-    loading.value = false
+    if (isCurrentRequest()) loading.value = false
   }
 }
+
+watch(
+  () => auth.sessionRevision,
+  () => {
+    taskRequestRevision += 1
+    tasks.value = []
+    loading.value = false
+  },
+)
 
 // 筛选或队友变更时重新拉取。imputed 触发会立即跑一次，覆盖初次加载。
 watch(
@@ -199,6 +222,10 @@ onMounted(() => {
       }
     })
   }
+})
+
+onBeforeUnmount(() => {
+  taskRequestRevision += 1
 })
 
 function openTask(task: Task) {

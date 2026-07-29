@@ -15,7 +15,15 @@ vi.mock('@/composables/useAppLogger', () => ({
 }))
 
 import { loadAuthState } from '@/utils/secureStorage'
-import { ApiRequestError, getMe, listTaskAttachments, login } from './index'
+import {
+  ApiRequestError,
+  getMe,
+  listTaskAttachments,
+  listTasks,
+  login,
+  onAuthExpired,
+  setAuthToken,
+} from './index'
 
 const localServiceNetworkMessage = '无法连接 Focus Task 本地服务（http://127.0.0.1:18765）。请确认 Focus Task 服务容器正在运行后重试。'
 
@@ -30,6 +38,8 @@ describe('API network failures', () => {
   })
 
   afterEach(() => {
+    onAuthExpired(null)
+    setAuthToken(null)
     vi.unstubAllGlobals()
   })
 
@@ -39,6 +49,22 @@ describe('API network failures', () => {
       'http://127.0.0.1:18765/api/auth/login',
       expect.objectContaining({ method: 'POST' }),
     )
+  })
+
+  it('allows a new login request when restoring an old desktop session failed', async () => {
+    vi.mocked(loadAuthState).mockRejectedValue(new Error('Credential Manager unavailable'))
+    fetchMock.mockResolvedValueOnce({
+      ok: false,
+      status: 401,
+      statusText: 'Unauthorized',
+      json: async () => ({ detail: 'Incorrect username or password' }),
+    })
+
+    const error = await login('tester', 'password').catch(error => error)
+
+    expect(error).toBeInstanceOf(ApiRequestError)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(loadAuthState).not.toHaveBeenCalled()
   })
 
   it('uses the same direct service origin for attachments', async () => {
@@ -58,5 +84,31 @@ describe('API network failures', () => {
 
     expect(error).toBeInstanceOf(ApiRequestError)
     expect(error).toMatchObject({ status: 401 })
+  })
+
+  it('reports a delayed 401 with the token and session revision captured before account switch', async () => {
+    let resolveResponse!: (response: Response) => void
+    const slowResponse = new Promise<Response>((resolve) => {
+      resolveResponse = resolve
+    })
+    const expired = vi.fn()
+    onAuthExpired(expired)
+    setAuthToken('token-a', 11)
+    fetchMock.mockReturnValueOnce(slowResponse)
+
+    const requestA = listTasks()
+    // Account B is already active before A's original request finishes.
+    setAuthToken('token-b', 13)
+    resolveResponse({
+      ok: false,
+      status: 401,
+      statusText: 'Unauthorized',
+      json: async () => ({ detail: 'Could not validate credentials' }),
+    } as Response)
+
+    await expect(requestA).rejects.toBeInstanceOf(ApiRequestError)
+    await vi.waitFor(() => {
+      expect(expired).toHaveBeenCalledWith({ token: 'token-a', sessionRevision: 11 })
+    })
   })
 })

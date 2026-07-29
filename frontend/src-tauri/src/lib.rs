@@ -8,14 +8,25 @@ use tauri::Manager;
 use tauri_plugin_notification::NotificationExt;
 
 const SERVICE_NAME: &str = "FocusTask";
-const TOKEN_ACCOUNT: &str = "auth_token";
-const USERNAME_ACCOUNT: &str = "auth_username";
+const AUTH_STATE_ACCOUNT: &str = "auth_state";
+const LEGACY_TOKEN_ACCOUNT: &str = "auth_token";
+const LEGACY_USERNAME_ACCOUNT: &str = "auth_username";
 const REPORT_EXPORT_DIRECTORY: [&str; 2] = ["Focus Task", "Reports"];
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 struct AuthState {
     token: String,
     username: String,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+struct StoredAuthState {
+    token: String,
+    username: String,
+    // Older installations stored AuthState directly and therefore have no
+    // marker. Missing means committed so those sessions remain readable.
+    #[serde(default)]
+    pending: bool,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -28,46 +39,220 @@ fn keyring_entry(account: &str) -> Result<Entry, String> {
     Entry::new(SERVICE_NAME, account).map_err(|err| err.to_string())
 }
 
+fn read_credential(account: &str) -> Result<Option<String>, String> {
+    match keyring_entry(account)?.get_password() {
+        Ok(value) => Ok(Some(value)),
+        Err(keyring::Error::NoEntry) => Ok(None),
+        Err(err) => Err(err.to_string()),
+    }
+}
+
+fn deserialize_stored_auth_state(serialized: &str) -> Result<StoredAuthState, String> {
+    let state: StoredAuthState = serde_json::from_str(serialized)
+        .map_err(|_| "Windows Credential Manager 中的登录状态格式无效".to_string())?;
+    if state.token.trim().is_empty() {
+        return Err("Windows Credential Manager 中的登录令牌为空".to_string());
+    }
+    Ok(state)
+}
+
+fn serialize_stored_auth_state(state: &AuthState, pending: bool) -> Result<String, String> {
+    serde_json::to_string(&StoredAuthState {
+        token: state.token.clone(),
+        username: state.username.clone(),
+        pending,
+    })
+    .map_err(|_| "无法序列化登录状态".to_string())
+}
+
+fn deserialize_auth_state(serialized: &str) -> Result<AuthState, String> {
+    let state = deserialize_stored_auth_state(serialized)?;
+    if state.pending {
+        return Err("Windows Credential Manager 中的登录状态尚未确认，请重新登录".to_string());
+    }
+    Ok(AuthState {
+        token: state.token,
+        username: state.username,
+    })
+}
+
+fn verify_pending_auth_state(serialized: &str, expected: &AuthState) -> Result<(), String> {
+    let saved = deserialize_stored_auth_state(serialized)?;
+    if saved.pending && saved.token == expected.token && saved.username == expected.username {
+        Ok(())
+    } else {
+        Err("Windows Credential Manager 未保留完整待确认登录状态".to_string())
+    }
+}
+
+fn clear_accounts<F>(accounts: &[&str], mut delete: F) -> Result<(), String>
+where
+    F: FnMut(&str) -> Result<(), String>,
+{
+    let mut failures = Vec::new();
+    for account in accounts {
+        if let Err(err) = delete(account) {
+            failures.push(format!("{account}: {err}"));
+        }
+    }
+
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "无法完整清除 Windows 凭据管理器登录状态：{}",
+            failures.join("；")
+        ))
+    }
+}
+
+fn delete_credential(account: &str) -> Result<(), String> {
+    match keyring_entry(account)?.delete_credential() {
+        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+        Err(err) => Err(err.to_string()),
+    }
+}
+
+fn clear_legacy_auth_state() -> Result<(), String> {
+    clear_accounts(
+        &[LEGACY_TOKEN_ACCOUNT, LEGACY_USERNAME_ACCOUNT],
+        delete_credential,
+    )
+}
+
+fn clear_auth_state_entries<F>(mut delete: F) -> Result<(), String>
+where
+    F: FnMut(&str) -> Result<(), String>,
+{
+    // Delete both legacy records before the new atomic record. If either
+    // legacy deletion fails, leave auth_state intact so the next launch keeps
+    // using the current session instead of falling back to an old token.
+    clear_accounts(
+        &[LEGACY_TOKEN_ACCOUNT, LEGACY_USERNAME_ACCOUNT],
+        |account| delete(account),
+    )?;
+    delete(AUTH_STATE_ACCOUNT)
+}
+
+fn cleanup_failed_auth_save<F>(mut delete: F) -> Result<(), String>
+where
+    F: FnMut(&str) -> Result<(), String>,
+{
+    // A failed save leaves auth_state in the pending form, which is a startup
+    // gate. Clear both legacy records first; if either deletion fails, retain
+    // that gate so load_auth_state cannot fall back to an old account. Only
+    // remove the pending record after legacy cleanup completely succeeds.
+    clear_accounts(
+        &[LEGACY_TOKEN_ACCOUNT, LEGACY_USERNAME_ACCOUNT],
+        |account| delete(account),
+    )?;
+    delete(AUTH_STATE_ACCOUNT)
+}
+
+fn load_legacy_auth_state() -> Result<Option<AuthState>, String> {
+    let token = read_credential(LEGACY_TOKEN_ACCOUNT)?;
+    let username = read_credential(LEGACY_USERNAME_ACCOUNT)?;
+
+    match token {
+        Some(token) if !token.trim().is_empty() => Ok(Some(AuthState {
+            token,
+            username: username.unwrap_or_default(),
+        })),
+        _ => Ok(None),
+    }
+}
+
+fn load_auth_state_with<R, L>(mut read: R, load_legacy: L) -> Result<Option<AuthState>, String>
+where
+    R: FnMut(&str) -> Result<Option<String>, String>,
+    L: FnOnce() -> Result<Option<AuthState>, String>,
+{
+    if let Some(serialized) = read(AUTH_STATE_ACCOUNT)? {
+        // A pending record is deliberately an error rather than a signal to
+        // fall back to legacy credentials. That prevents a failed save from
+        // reviving either the new token or an older account at next startup.
+        return deserialize_auth_state(&serialized).map(Some);
+    }
+
+    load_legacy()
+}
+
 #[tauri::command]
 fn load_auth_state() -> Result<Option<AuthState>, String> {
-    let token_entry = keyring_entry(TOKEN_ACCOUNT)?;
-    let username_entry = keyring_entry(USERNAME_ACCOUNT)?;
+    load_auth_state_with(read_credential, load_legacy_auth_state)
+}
 
-    let token = match token_entry.get_password() {
-        Ok(value) => value,
-        Err(keyring::Error::NoEntry) => return Ok(None),
-        Err(err) => return Err(err.to_string()),
-    };
-    let username = match username_entry.get_password() {
-        Ok(value) => value,
-        Err(keyring::Error::NoEntry) => String::new(),
-        Err(err) => return Err(err.to_string()),
-    };
+fn save_auth_state_with<W, R, D>(
+    state: &AuthState,
+    mut write: W,
+    mut read: R,
+    mut delete: D,
+) -> Result<(), String>
+where
+    W: FnMut(&str) -> Result<(), String>,
+    R: FnMut() -> Result<Option<String>, String>,
+    D: FnMut(&str) -> Result<(), String>,
+{
+    let save_result = (|| {
+        let pending = serialize_stored_auth_state(state, true)?;
+        write(&pending)?;
 
-    Ok(Some(AuthState { token, username }))
+        match read()? {
+            Some(saved) => verify_pending_auth_state(&saved, state)?,
+            None => {
+                return Err("Windows Credential Manager 未保留待确认登录状态".to_string());
+            }
+        }
+
+        // This second successful keyring write is the commit. Do not add a
+        // post-commit read that could report failure after an active record
+        // already exists; any earlier failure leaves only a pending record,
+        // which load_auth_state deliberately rejects.
+        let committed = serialize_stored_auth_state(state, false)?;
+        write(&committed)
+    })();
+
+    if let Err(error) = save_result {
+        // Cleanup is only best effort. The pending marker above is the
+        // fail-closed guarantee when Windows refuses to delete the record.
+        return match cleanup_failed_auth_save(|account| delete(account)) {
+            Ok(()) => Err(error),
+            Err(cleanup_error) => Err(format!("{error}；清理失败：{cleanup_error}")),
+        };
+    }
+
+    Ok(())
+}
+
+fn write_auth_state_credential(serialized: &str) -> Result<(), String> {
+    keyring_entry(AUTH_STATE_ACCOUNT)?
+        .set_password(serialized)
+        .map_err(|err| err.to_string())
 }
 
 #[tauri::command]
 fn save_auth_state(state: AuthState) -> Result<(), String> {
-    keyring_entry(TOKEN_ACCOUNT)?
-        .set_password(&state.token)
-        .map_err(|err| err.to_string())?;
-    keyring_entry(USERNAME_ACCOUNT)?
-        .set_password(&state.username)
-        .map_err(|err| err.to_string())?;
+    if state.token.trim().is_empty() {
+        return Err("拒绝保存空登录令牌".to_string());
+    }
+
+    save_auth_state_with(
+        &state,
+        write_auth_state_credential,
+        || read_credential(AUTH_STATE_ACCOUNT),
+        delete_credential,
+    )?;
+
+    // The new record contains token and username atomically. Legacy cleanup is
+    // best effort after a committed save; later logout starts with both legacy
+    // records and deliberately preserves auth_state if that cleanup is incomplete.
+    let _ = clear_legacy_auth_state();
     Ok(())
 }
 
 #[tauri::command]
 fn clear_auth_state() -> Result<(), String> {
-    for account in [TOKEN_ACCOUNT, USERNAME_ACCOUNT] {
-        if let Err(err) = keyring_entry(account)?.delete_credential() {
-            if !matches!(err, keyring::Error::NoEntry) {
-                return Err(err.to_string());
-            }
-        }
-    }
-    Ok(())
+    clear_auth_state_entries(delete_credential)
 }
 
 #[tauri::command]
@@ -429,5 +614,277 @@ mod report_export_tests {
         );
 
         fs::remove_dir_all(&root).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod auth_state_tests {
+    use super::*;
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    #[test]
+    fn committed_auth_state_round_trips_while_pending_state_is_rejected() {
+        let expected = AuthState {
+            token: "service-jwt".to_string(),
+            username: "alice".to_string(),
+        };
+
+        let legacy_serialized = serde_json::to_string(&expected).unwrap();
+        assert_eq!(
+            deserialize_auth_state(&legacy_serialized).unwrap(),
+            expected
+        );
+
+        let committed = serialize_stored_auth_state(&expected, false).unwrap();
+        assert_eq!(deserialize_auth_state(&committed).unwrap(), expected);
+
+        let pending = serialize_stored_auth_state(&expected, true).unwrap();
+        let pending_error = deserialize_auth_state(&pending).unwrap_err();
+        assert!(pending_error.contains("尚未确认"));
+
+        assert!(deserialize_auth_state("not-json").is_err());
+        assert!(deserialize_auth_state(r#"{"token":"","username":"alice"}"#).is_err());
+    }
+
+    #[test]
+    fn verified_pending_state_commits_without_a_post_commit_read() {
+        let expected = AuthState {
+            token: "service-jwt".to_string(),
+            username: "alice".to_string(),
+        };
+        let stored = Rc::new(RefCell::new(None::<String>));
+        let writes = Rc::new(RefCell::new(Vec::<String>::new()));
+
+        save_auth_state_with(
+            &expected,
+            {
+                let stored = Rc::clone(&stored);
+                let writes = Rc::clone(&writes);
+                move |serialized| {
+                    writes.borrow_mut().push(serialized.to_string());
+                    *stored.borrow_mut() = Some(serialized.to_string());
+                    Ok(())
+                }
+            },
+            {
+                let stored = Rc::clone(&stored);
+                move || Ok(stored.borrow().clone())
+            },
+            |_| Ok(()),
+        )
+        .unwrap();
+
+        assert_eq!(writes.borrow().len(), 2);
+        assert!(
+            deserialize_stored_auth_state(&writes.borrow()[0])
+                .unwrap()
+                .pending
+        );
+        assert!(
+            !deserialize_stored_auth_state(&writes.borrow()[1])
+                .unwrap()
+                .pending
+        );
+        assert_eq!(
+            load_auth_state_with(
+                {
+                    let stored = Rc::clone(&stored);
+                    move |_| Ok(stored.borrow().clone())
+                },
+                || Ok(None),
+            )
+            .unwrap(),
+            Some(expected)
+        );
+    }
+
+    #[test]
+    fn failed_pending_save_is_rejected_after_auth_state_delete_failure_and_restart() {
+        let new_state = AuthState {
+            token: "new-service-jwt".to_string(),
+            username: "bob".to_string(),
+        };
+        let stored = Rc::new(RefCell::new(None::<String>));
+        let deleted = Rc::new(RefCell::new(Vec::<String>::new()));
+
+        let error = save_auth_state_with(
+            &new_state,
+            {
+                let stored = Rc::clone(&stored);
+                move |serialized| {
+                    *stored.borrow_mut() = Some(serialized.to_string());
+                    Ok(())
+                }
+            },
+            || Err("simulated readback failure".to_string()),
+            {
+                let deleted = Rc::clone(&deleted);
+                move |account| {
+                    deleted.borrow_mut().push(account.to_string());
+                    if account == AUTH_STATE_ACCOUNT {
+                        Err("simulated auth_state delete failure".to_string())
+                    } else {
+                        Ok(())
+                    }
+                }
+            },
+        )
+        .unwrap_err();
+
+        assert!(error.contains("simulated readback failure"));
+        assert!(error.contains("simulated auth_state delete failure"));
+        assert_eq!(
+            *deleted.borrow(),
+            vec![
+                LEGACY_TOKEN_ACCOUNT.to_string(),
+                LEGACY_USERNAME_ACCOUNT.to_string(),
+                AUTH_STATE_ACCOUNT.to_string(),
+            ]
+        );
+        let pending = stored.borrow().clone().unwrap();
+        assert!(deserialize_stored_auth_state(&pending).unwrap().pending);
+
+        let restart_error = load_auth_state_with(
+            {
+                let stored = Rc::clone(&stored);
+                move |account| {
+                    assert_eq!(account, AUTH_STATE_ACCOUNT);
+                    Ok(stored.borrow().clone())
+                }
+            },
+            || panic!("pending auth_state must not fall back to legacy credentials"),
+        )
+        .unwrap_err();
+        assert!(restart_error.contains("尚未确认"));
+    }
+
+    #[test]
+    fn failed_pending_save_preserves_gate_when_legacy_token_delete_fails() {
+        let new_state = AuthState {
+            token: "new-service-jwt".to_string(),
+            username: "bob".to_string(),
+        };
+        let stored = Rc::new(RefCell::new(None::<String>));
+        let deleted = Rc::new(RefCell::new(Vec::<String>::new()));
+
+        let error = save_auth_state_with(
+            &new_state,
+            {
+                let stored = Rc::clone(&stored);
+                move |serialized| {
+                    *stored.borrow_mut() = Some(serialized.to_string());
+                    Ok(())
+                }
+            },
+            || Err("simulated pending verification failure".to_string()),
+            {
+                let deleted = Rc::clone(&deleted);
+                move |account| {
+                    deleted.borrow_mut().push(account.to_string());
+                    if account == LEGACY_TOKEN_ACCOUNT {
+                        Err("simulated legacy token delete failure".to_string())
+                    } else {
+                        // Deleting AUTH_STATE_ACCOUNT would succeed, but the
+                        // legacy failure must prevent this callback from being
+                        // reached for that account.
+                        Ok(())
+                    }
+                }
+            },
+        )
+        .unwrap_err();
+
+        assert!(error.contains("simulated pending verification failure"));
+        assert!(error.contains("simulated legacy token delete failure"));
+        assert_eq!(
+            *deleted.borrow(),
+            vec![
+                LEGACY_TOKEN_ACCOUNT.to_string(),
+                LEGACY_USERNAME_ACCOUNT.to_string(),
+            ]
+        );
+        let pending = stored.borrow().clone().unwrap();
+        assert!(deserialize_stored_auth_state(&pending).unwrap().pending);
+
+        let restart_error = load_auth_state_with(
+            {
+                let stored = Rc::clone(&stored);
+                move |account| {
+                    assert_eq!(account, AUTH_STATE_ACCOUNT);
+                    Ok(stored.borrow().clone())
+                }
+            },
+            || panic!("pending auth_state must not fall back to legacy credentials"),
+        )
+        .unwrap_err();
+        assert!(restart_error.contains("尚未确认"));
+    }
+
+    #[test]
+    fn cleanup_attempts_both_legacy_records_before_preserving_current_session() {
+        let mut attempted = Vec::new();
+        let result = clear_auth_state_entries(|account| {
+            attempted.push(account.to_string());
+            if account == LEGACY_TOKEN_ACCOUNT {
+                Err("simulated delete failure".to_string())
+            } else {
+                Ok(())
+            }
+        });
+
+        assert_eq!(
+            attempted,
+            vec![
+                LEGACY_TOKEN_ACCOUNT.to_string(),
+                LEGACY_USERNAME_ACCOUNT.to_string(),
+            ]
+        );
+        let error = result.unwrap_err();
+        assert!(error.contains(LEGACY_TOKEN_ACCOUNT));
+        assert!(error.contains("simulated delete failure"));
+    }
+
+    #[test]
+    fn cleanup_removes_current_record_only_after_legacy_records_are_gone() {
+        let mut attempted = Vec::new();
+        clear_auth_state_entries(|account| {
+            attempted.push(account.to_string());
+            Ok(())
+        })
+        .unwrap();
+
+        assert_eq!(
+            attempted,
+            vec![
+                LEGACY_TOKEN_ACCOUNT.to_string(),
+                LEGACY_USERNAME_ACCOUNT.to_string(),
+                AUTH_STATE_ACCOUNT.to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn failed_save_cleanup_preserves_pending_gate_when_legacy_cleanup_fails() {
+        let mut attempted = Vec::new();
+        let result = cleanup_failed_auth_save(|account| {
+            attempted.push(account.to_string());
+            if account == LEGACY_TOKEN_ACCOUNT {
+                Err("simulated legacy delete failure".to_string())
+            } else {
+                Ok(())
+            }
+        });
+
+        assert_eq!(
+            attempted,
+            vec![
+                LEGACY_TOKEN_ACCOUNT.to_string(),
+                LEGACY_USERNAME_ACCOUNT.to_string(),
+            ]
+        );
+        let error = result.unwrap_err();
+        assert!(error.contains(LEGACY_TOKEN_ACCOUNT));
+        assert!(error.contains("simulated legacy delete failure"));
     }
 }
