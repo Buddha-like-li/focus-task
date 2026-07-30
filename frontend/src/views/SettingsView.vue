@@ -213,10 +213,17 @@
         </div>
         <div class="account-body">
           <p class="account-username">{{ auth.username }}</p>
-          <p class="field-note">退出后可使用其他账号登录，本地任务数据不会被删除。</p>
+          <p class="field-note">切换账号会保留本机已记住的登录状态；退出登录会清除当前账号的登录状态。</p>
+          <p v-if="auth.sessionWarning" class="field-note account-warning" role="status">{{ auth.sessionWarning }}</p>
           <div class="permission-actions">
-            <button class="danger-btn account-logout-btn" :disabled="loggingOut" @click="handleLogout">
-              {{ loggingOut ? '正在退出…' : '退出登录' }}
+            <button class="secondary-btn account-switch-btn" :disabled="accountActionBusy" @click="handleSwitchAccount">
+              {{ switchingAccount ? '正在切换…' : '切换账号' }}
+            </button>
+            <button class="danger-btn account-logout-btn" :disabled="accountActionBusy" @click="handleLogout">
+              {{ loggingOut ? '正在退出…' : '退出登录并清除状态' }}
+            </button>
+            <button class="danger-btn account-remove-btn" :disabled="accountActionBusy" @click="handleRemoveCurrentAccount">
+              {{ removingAccount ? '正在移除…' : '移除此账号' }}
             </button>
           </div>
           <p v-if="logoutError" class="field-note account-error" role="alert">{{ logoutError }}</p>
@@ -311,7 +318,10 @@ const showUpdateModal = ref(false)
 const updateError = ref('')
 const installStatus = computed(() => formatInstallPhase(installPhase.value))
 const loggingOut = ref(false)
+const switchingAccount = ref(false)
+const removingAccount = ref(false)
 const logoutError = ref('')
+const accountActionBusy = computed(() => loggingOut.value || switchingAccount.value || removingAccount.value)
 
 // P6 team card state
 const newTeamName = ref('')
@@ -423,18 +433,54 @@ async function handleDissolve() {
 }
 
 async function handleLogout() {
-  if (loggingOut.value) return
+  if (accountActionBusy.value) return
 
   loggingOut.value = true
   logoutError.value = ''
   try {
-    await auth.logout()
-    await router.replace('/login')
+    if (await auth.logout()) {
+      await router.replace('/login')
+    }
   } catch (error) {
     logoutError.value = error instanceof Error ? error.message : '退出登录失败，请稍后重试。'
     appLogger.error('[认证] 退出登录失败', error)
   } finally {
     loggingOut.value = false
+  }
+}
+
+async function handleSwitchAccount() {
+  if (accountActionBusy.value) return
+
+  switchingAccount.value = true
+  logoutError.value = ''
+  try {
+    if (await auth.switchAccount()) {
+      await router.replace('/login')
+    }
+  } catch (error) {
+    logoutError.value = error instanceof Error ? error.message : '切换账号失败，请稍后重试。'
+    appLogger.error('[认证] 切换账号失败', error)
+  } finally {
+    switchingAccount.value = false
+  }
+}
+
+async function handleRemoveCurrentAccount() {
+  if (accountActionBusy.value) return
+  if (!window.confirm('确定从本机移除此账号吗？这不会影响服务端数据和任务。')) return
+
+  removingAccount.value = true
+  logoutError.value = ''
+  try {
+    if (await auth.removeCurrentAccount()) {
+      await router.replace('/login')
+    }
+  } catch (error) {
+    logoutError.value = error instanceof Error ? error.message : '移除账号失败，请稍后重试。'
+    appLogger.error('[认证] 移除本机账号失败', error)
+  } finally {
+    removingAccount.value = false
   }
 }
 
@@ -960,13 +1006,26 @@ onMounted(async () => {
   font-size: 13px;
 }
 
-.account-logout-btn:disabled {
+.account-switch-btn,
+.account-remove-btn {
+  height: 34px;
+  padding: 0 14px;
+  font-size: 13px;
+}
+
+.account-logout-btn:disabled,
+.account-switch-btn:disabled,
+.account-remove-btn:disabled {
   cursor: not-allowed;
   opacity: 0.55;
 }
 
 .account-error {
   color: oklch(52% 0.16 25);
+}
+
+.account-warning {
+  color: oklch(50% 0.11 70);
 }
 
 </style>

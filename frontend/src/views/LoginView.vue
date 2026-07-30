@@ -13,23 +13,64 @@
       <h1 class="login-title">Focus Task</h1>
       <p class="login-subtitle">把重要的事放回桌面中央</p>
       <form class="login-form" @submit.prevent="handleSubmit">
-        <div class="form-item">
-          <label>用户名</label>
-          <input v-model="form.username" type="text" placeholder="输入用户名" class="form-input" />
+        <div class="form-item account-field" ref="accountFieldEl">
+          <label for="login-username">用户名</label>
+          <input
+            id="login-username"
+            ref="usernameInputEl"
+            v-model="form.username"
+            type="text"
+            autocomplete="username"
+            placeholder="输入用户名"
+            class="form-input"
+            :aria-expanded="showAccountMenu"
+            aria-controls="remembered-account-list"
+            @focus="openAccountMenu"
+            @input="openAccountMenu"
+            @keydown.esc="showAccountMenu = false"
+          />
+          <div
+            v-if="showAccountMenu && filteredAccounts.length"
+            id="remembered-account-list"
+            class="account-menu"
+            role="listbox"
+            aria-label="已记住的账号"
+          >
+            <p class="account-menu-title">已记住的账号</p>
+            <button
+              v-for="account in filteredAccounts"
+              :key="account.username"
+              type="button"
+              class="account-option"
+              :disabled="loading"
+              role="option"
+              :aria-selected="form.username.trim() === account.username"
+              @mousedown.prevent
+              @click="selectAccount(account)"
+            >
+              <span class="account-option-name">{{ account.username }}</span>
+              <span class="account-option-status">{{ account.hasSession ? '可直接登录' : '需要重新输入密码' }}</span>
+            </button>
+          </div>
         </div>
         <div class="form-item">
-          <label>密码</label>
-          <input v-model="form.password" type="password" placeholder="输入密码" class="form-input" />
+          <label for="login-password">密码</label>
+          <input
+            id="login-password"
+            ref="passwordInputEl"
+            v-model="form.password"
+            type="password"
+            autocomplete="current-password"
+            placeholder="输入密码"
+            class="form-input"
+          />
         </div>
-        <label class="remember-row">
-          <input v-model="rememberUsername" type="checkbox" class="remember-checkbox" />
-          <span>记住用户名</span>
-        </label>
         <button type="submit" class="form-btn" :disabled="loading">
           {{ loading ? '处理中…' : isRegister ? '注册' : '登录' }}
         </button>
-        <p v-if="displayedError" class="error-msg">{{ displayedError }}</p>
-        <p class="switch-mode" @click="isRegister = !isRegister">
+        <p v-if="displayedError" class="error-msg" role="alert">{{ displayedError }}</p>
+        <p v-else-if="auth.sessionWarning" class="session-warning" role="status">{{ auth.sessionWarning }}</p>
+        <p class="switch-mode" @click="toggleMode">
           {{ isRegister ? '已有账号？去登录' : '没有账号？去注册' }}
         </p>
       </form>
@@ -38,30 +79,50 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, reactive, onMounted, onUnmounted } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/authStore'
-import { clearRememberedUsername, loadRememberedUsername, saveRememberedUsername } from '@/utils/secureStorage'
+import type { AuthAccount } from '@/utils/secureStorage'
 
 const router = useRouter()
 const auth = useAuthStore()
 const loginPageEl = ref<HTMLElement | null>(null)
+const accountFieldEl = ref<HTMLElement | null>(null)
+const usernameInputEl = ref<HTMLInputElement | null>(null)
+const passwordInputEl = ref<HTMLInputElement | null>(null)
 
 const isRegister = ref(false)
 const loading = ref(false)
 const errorMsg = ref('')
-const rememberUsername = ref(true)
+const showAccountMenu = ref(false)
 const form = reactive({ username: '', password: '' })
 const displayedError = computed(() => errorMsg.value || auth.restoreError)
+const filteredAccounts = computed(() => {
+  const query = form.username.trim().toLocaleLowerCase()
+  return auth.rememberedAccounts.filter(account => (
+    !query || account.username.toLocaleLowerCase().includes(query)
+  ))
+})
+
+function openAccountMenu() {
+  showAccountMenu.value = true
+}
+
+function toggleMode() {
+  isRegister.value = !isRegister.value
+  errorMsg.value = ''
+  showAccountMenu.value = false
+}
 
 async function handleSubmit() {
   errorMsg.value = ''
   auth.clearRestoreError()
-  if (!form.username || !form.password) {
+  const normalizedUsername = form.username.trim()
+  if (!normalizedUsername || !form.password) {
     errorMsg.value = '请输入用户名和密码'
     return
   }
-  if (form.username.trim().length < 2) {
+  if (normalizedUsername.length < 2) {
     errorMsg.value = '用户名至少需要 2 个字符'
     return
   }
@@ -69,35 +130,72 @@ async function handleSubmit() {
     errorMsg.value = '密码至少需要 8 个字符'
     return
   }
+
   loading.value = true
   try {
+    form.username = normalizedUsername
     if (isRegister.value) {
-      await auth.register(form.username, form.password)
+      await auth.register(normalizedUsername, form.password)
     } else {
-      await auth.login(form.username, form.password)
+      await auth.login(normalizedUsername, form.password)
     }
-    if (rememberUsername.value) {
-      saveRememberedUsername(form.username.trim())
-    } else {
-      clearRememberedUsername()
-    }
-    router.push('/')
-  } catch (e: any) {
-    errorMsg.value = e?.message || '操作失败'
+    // Passwords are only used for this request and never need to remain in
+    // reactive form state after an authenticated session has been established.
+    form.password = ''
+    await router.replace('/')
+  } catch (error: unknown) {
+    errorMsg.value = error instanceof Error ? error.message : '操作失败，请稍后重试。'
   } finally {
     loading.value = false
   }
 }
 
+async function selectAccount(account: AuthAccount) {
+  form.username = account.username
+  form.password = ''
+  errorMsg.value = ''
+  auth.clearRestoreError()
+  showAccountMenu.value = false
+
+  if (!account.hasSession) {
+    errorMsg.value = '此账号需要重新输入密码。'
+    await nextTick()
+    passwordInputEl.value?.focus()
+    return
+  }
+
+  loading.value = true
+  try {
+    const restored = await auth.restoreAccount(account.username)
+    if (restored) {
+      await router.replace('/')
+      return
+    }
+
+    // A 401 removes only this account's saved session in authStore. Keep its
+    // username in place so the person only has to type the password again.
+    form.username = auth.loginUsernameHint || account.username
+    errorMsg.value = '登录状态已失效，请输入密码重新登录。'
+    await nextTick()
+    passwordInputEl.value?.focus()
+  } catch (error: unknown) {
+    errorMsg.value = error instanceof Error ? error.message : '恢复账号失败，请稍后重试。'
+  } finally {
+    loading.value = false
+  }
+}
+
+function handleDocumentPointerDown(event: PointerEvent) {
+  if (accountFieldEl.value?.contains(event.target as Node)) return
+  showAccountMenu.value = false
+}
+
 // ─── Window Dragging for Login Page ───
-let loginAppWindow: any = null
+let loginAppWindow: { startDragging: () => void } | null = null
 
 onMounted(async () => {
-  const rememberedUsername = loadRememberedUsername()
-  if (rememberedUsername) {
-    form.username = rememberedUsername
-    rememberUsername.value = true
-  }
+  form.username = auth.loginUsernameHint
+  await auth.refreshRememberedAccounts().catch(() => undefined)
 
   try {
     const { getCurrentWindow } = await import('@tauri-apps/api/window')
@@ -107,17 +205,20 @@ onMounted(async () => {
   }
 
   const page = loginPageEl.value
-  if (!page || !loginAppWindow) return
-
-  page.addEventListener('mousedown', (e: MouseEvent) => {
-    if (e.buttons !== 1) return
-    const t = e.target as HTMLElement
-    if (t.closest('.login-card')) return
-    loginAppWindow.startDragging()
-  })
+  if (page && loginAppWindow) {
+    page.addEventListener('mousedown', (event: MouseEvent) => {
+      if (event.buttons !== 1) return
+      const target = event.target as HTMLElement
+      if (target.closest('.login-card')) return
+      loginAppWindow?.startDragging()
+    })
+  }
+  document.addEventListener('pointerdown', handleDocumentPointerDown)
 })
 
-onUnmounted(() => {})
+onUnmounted(() => {
+  document.removeEventListener('pointerdown', handleDocumentPointerDown)
+})
 </script>
 
 <style scoped>
@@ -229,6 +330,10 @@ onUnmounted(() => {})
   color: oklch(46% 0.015 240);
   margin-bottom: 6px;
 }
+.account-field {
+  position: relative;
+  z-index: 3;
+}
 .form-input {
   width: 100%;
   padding: 8px 12px;
@@ -240,6 +345,60 @@ onUnmounted(() => {})
 }
 .form-input:focus {
   border-color: oklch(56% 0.12 205);
+}
+.account-menu {
+  position: absolute;
+  z-index: 5;
+  top: calc(100% - 10px);
+  left: 0;
+  right: 0;
+  max-height: 190px;
+  overflow-y: auto;
+  padding: 6px;
+  border: 1px solid oklch(85% 0.01 240);
+  border-radius: 8px;
+  background: oklch(100% 0 0 / 0.98);
+  box-shadow: 0 12px 28px oklch(0 0 0 / 0.12);
+}
+.account-menu-title {
+  margin: 4px 7px 6px;
+  color: oklch(46% 0.015 240);
+  font-size: 12px;
+}
+.account-option {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: oklch(22% 0.012 240);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.account-option:hover:not(:disabled),
+.account-option:focus-visible {
+  background: oklch(95% 0.015 240);
+  outline: none;
+}
+.account-option:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+.account-option-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.account-option-status {
+  flex: 0 0 auto;
+  color: oklch(50% 0.025 240);
+  font-size: 11px;
 }
 .form-btn {
   width: 100%;
@@ -255,23 +414,16 @@ onUnmounted(() => {})
 }
 .form-btn:hover { opacity: 0.9; }
 .form-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-.remember-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin: 2px 0 14px;
-  font-size: 13px;
-  color: oklch(44% 0.014 240);
-  user-select: none;
-}
-.remember-checkbox {
-  width: 15px;
-  height: 15px;
-  accent-color: oklch(56% 0.12 205);
-}
 .error-msg {
   color: oklch(55% 0.15 25);
   font-size: 13px;
+  text-align: center;
+  margin-top: 8px;
+}
+.session-warning {
+  color: oklch(50% 0.11 70);
+  font-size: 13px;
+  line-height: 1.5;
   text-align: center;
   margin-top: 8px;
 }
