@@ -11,6 +11,7 @@ vi.mock('@tauri-apps/api/core', () => ({
 import { invoke } from '@tauri-apps/api/core'
 import { isTauriRuntime } from './platform'
 import {
+  deleteTaskReportCopies,
   reportDocumentFilename,
   reportExportFilename,
   revealReportMarkdownFile,
@@ -99,6 +100,23 @@ describe('report file actions', () => {
 
     expect(createObjectUrl).toHaveBeenCalledTimes(1)
     expect(clickSpy).toHaveBeenCalledTimes(1)
+    expect(invoke).not.toHaveBeenCalled()
+  })
+
+  it('asks the native shell to clear only the task-specific report copies', async () => {
+    vi.mocked(isTauriRuntime).mockReturnValue(true)
+    vi.mocked(invoke).mockResolvedValue(2)
+
+    await expect(deleteTaskReportCopies(42)).resolves.toBe(2)
+
+    expect(invoke).toHaveBeenCalledWith('delete_task_report_copies', { taskId: 42 })
+  })
+
+  it('rejects invalid task identifiers before invoking the native shell', async () => {
+    vi.mocked(isTauriRuntime).mockReturnValue(true)
+
+    await expect(deleteTaskReportCopies(0)).rejects.toThrow('任务编号无效')
+    await expect(deleteTaskReportCopies(1.5)).rejects.toThrow('任务编号无效')
     expect(invoke).not.toHaveBeenCalled()
   })
 })

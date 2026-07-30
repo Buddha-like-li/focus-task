@@ -260,8 +260,36 @@ export async function updateTask(taskId: number, updates: Partial<Task>): Promis
   return request('PATCH', `/api/tasks/${taskId}`, updates)
 }
 
-export async function deleteTask(taskId: number): Promise<void> {
+/** 将任务移入垃圾桶。服务端保留任务数据，直到用户在垃圾桶中彻底删除。 */
+export async function moveTaskToTrash(taskId: number): Promise<void> {
   await request('DELETE', `/api/tasks/${taskId}`)
+}
+
+/** @deprecated 使用 moveTaskToTrash，保留给旧客户端内部调用。 */
+export const deleteTask = moveTaskToTrash
+
+/** 仅返回当前账号已移入垃圾桶的任务。 */
+export async function listTrashTasks(): Promise<Task[]> {
+  return request('GET', '/api/tasks/trash')
+}
+
+/** 将垃圾桶中的任务恢复到工作台。 */
+export async function restoreTrashTask(taskId: number): Promise<Task> {
+  return request('POST', `/api/tasks/${taskId}/restore`)
+}
+
+export interface PermanentTaskDeletionResult {
+  ok: boolean
+  permanentlyDeleted: boolean
+  cleanupPending: boolean
+}
+
+/**
+ * 彻底删除垃圾桶中的任务及服务端管理的关联内容。
+ * cleanupPending 表示服务记录已删除，但服务端文件清理仍待后续重试。
+ */
+export async function permanentlyDeleteTask(taskId: number): Promise<PermanentTaskDeletionResult> {
+  return request('DELETE', `/api/tasks/${taskId}/permanent`)
 }
 
 // P6-3: transfer a task to a teammate. The task's user_id flips to the

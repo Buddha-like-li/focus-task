@@ -7,7 +7,7 @@ const apiMocks = vi.hoisted(() => ({
   listTasks: vi.fn(),
   createTask: vi.fn(),
   updateTask: vi.fn(),
-  deleteTask: vi.fn(),
+  moveTaskToTrash: vi.fn(),
   reorderTasks: vi.fn(),
   listRequirements: vi.fn(),
   getTeam: vi.fn(),
@@ -180,9 +180,9 @@ describe('账号切换期间的请求隔离', () => {
     expect(store.tasks[0]?.title).toBe('账号 B 标题')
 
     const deleteA = deferred<void>()
-    apiMocks.deleteTask.mockReturnValueOnce(deleteA.promise)
+    apiMocks.moveTaskToTrash.mockReturnValueOnce(deleteA.promise)
     store.replaceServerTasks([task('shared', '账号 A 待删任务')])
-    const deleting = store.removeTask('shared')
+    const deleting = store.moveTaskToTrash('shared')
     store.clearSessionState()
     store.replaceServerTasks([task('shared', '账号 B 保留任务')])
     deleteA.resolve()

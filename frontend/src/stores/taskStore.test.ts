@@ -4,10 +4,12 @@ import type { Task } from './taskStore'
 
 vi.mock('@/api', () => ({
   listTasks: vi.fn(),
+  moveTaskToTrash: vi.fn(),
 }))
 
 import * as api from '@/api'
 import { useTaskStore } from './taskStore'
+import { useTrashStore } from './trashStore'
 
 function makeServerTask(overrides: Partial<Task> = {}): Task {
   return {
@@ -79,5 +81,33 @@ describe('taskStore task belonging normalization', () => {
       quadrant: 3,
       taskBelonging: '客户专项',
     })
+  })
+
+  it('移入垃圾桶成功后立即更新垃圾桶数量', async () => {
+    vi.mocked(api.moveTaskToTrash).mockResolvedValue(undefined)
+    const taskStore = useTaskStore()
+    const trashStore = useTrashStore()
+    taskStore.replaceServerTasks([makeServerTask({ id: 12, clientId: 'move-to-trash' })])
+
+    await expect(taskStore.moveTaskToTrash('move-to-trash')).resolves.toBe(true)
+
+    expect(taskStore.tasks).toEqual([])
+    expect(trashStore.count).toBe(1)
+    expect(trashStore.tasks[0]).toMatchObject({ id: 12, clientId: 'move-to-trash', deleted: true })
+  })
+
+  it('移入父任务垃圾桶时同时从扁平工作台缓存移除子任务', async () => {
+    vi.mocked(api.moveTaskToTrash).mockResolvedValue(undefined)
+    const taskStore = useTaskStore()
+    taskStore.replaceServerTasks([
+      makeServerTask({ id: 20, clientId: 'parent-task', title: '父任务' }),
+      makeServerTask({ id: 21, clientId: 'child-task', title: '子任务', parentTaskId: 'parent-task' }),
+    ])
+    taskStore.selectTask('child-task')
+
+    await expect(taskStore.moveTaskToTrash('parent-task')).resolves.toBe(true)
+
+    expect(taskStore.tasks).toEqual([])
+    expect(taskStore.selectedTaskId).toBeNull()
   })
 })

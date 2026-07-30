@@ -286,9 +286,9 @@ async function confirmAdd() {
         return
       }
     } else {
-      const removed = await store.removeTask(draftId)
+      const removed = await store.moveTaskToTrash(draftId)
       if (!removed) {
-        addError.value = store.serviceError || '无法删除空任务，请确认本地服务正在运行后重试。'
+        addError.value = store.serviceError || '无法将空任务移入垃圾桶，请确认本地服务正在运行后重试。'
         return
       }
     }

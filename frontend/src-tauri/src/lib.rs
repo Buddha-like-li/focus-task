@@ -898,6 +898,65 @@ fn existing_report_output_path(documents_dir: &Path, filename: &str) -> Result<P
     Ok(output)
 }
 
+fn is_task_report_copy_filename(filename: &str, task_id: u64) -> bool {
+    let prefix = format!("task-{task_id}-");
+    let Some(suffix) = filename.strip_prefix(&prefix) else {
+        return false;
+    };
+    let Some(timestamp) = suffix.strip_suffix(".md") else {
+        return false;
+    };
+
+    !timestamp.is_empty()
+        && timestamp
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+}
+
+/// Deletes only application-managed, single-task Markdown copies in the fixed
+/// Documents\\Focus Task\\Reports directory. No caller-provided paths and no
+/// recursive traversal are accepted here.
+fn delete_task_report_copies_from_directory(
+    documents_dir: &Path,
+    task_id: u64,
+) -> Result<usize, String> {
+    if task_id == 0 {
+        return Err("任务编号无效，无法清理本机报告副本。".to_string());
+    }
+
+    let directory = report_export_directory(documents_dir);
+    let entries = match fs::read_dir(&directory) {
+        Ok(entries) => entries,
+        Err(err) if err.kind() == ErrorKind::NotFound => return Ok(0),
+        Err(err) => return Err(format!("无法读取本机报告目录：{err}")),
+    };
+
+    let mut deleted = 0;
+    for entry in entries {
+        let entry = entry.map_err(|err| format!("无法读取本机报告文件：{err}"))?;
+        let file_type = entry
+            .file_type()
+            .map_err(|err| format!("无法检查本机报告文件：{err}"))?;
+        // Do not follow symlinks or recurse into directories. The command only
+        // deletes direct, ordinary Markdown files generated for this task.
+        if !file_type.is_file() || file_type.is_symlink() {
+            continue;
+        }
+
+        let filename = entry.file_name();
+        let Some(filename) = filename.to_str() else {
+            continue;
+        };
+        if !is_task_report_copy_filename(filename, task_id) {
+            continue;
+        }
+
+        fs::remove_file(entry.path()).map_err(|err| format!("无法删除本机报告副本：{err}"))?;
+        deleted += 1;
+    }
+    Ok(deleted)
+}
+
 fn documents_directory(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     app.path()
         .document_dir()
@@ -946,6 +1005,11 @@ fn reveal_report_markdown(app: tauri::AppHandle, filename: String) -> Result<(),
 }
 
 #[tauri::command]
+fn delete_task_report_copies(app: tauri::AppHandle, task_id: u64) -> Result<usize, String> {
+    delete_task_report_copies_from_directory(&documents_directory(&app)?, task_id)
+}
+
+#[tauri::command]
 fn send_native_notification(
     app_handle: tauri::AppHandle,
     payload: NativeNotificationPayload,
@@ -985,7 +1049,8 @@ pub fn run() {
             append_log,
             save_report_markdown,
             save_and_reveal_report_markdown,
-            reveal_report_markdown
+            reveal_report_markdown,
+            delete_task_report_copies
         ])
         .setup(|app| {
             #[cfg(debug_assertions)]
@@ -1104,6 +1169,56 @@ mod report_export_tests {
             existing_report_output_path(&root, "task-42.md").unwrap(),
             saved
         );
+
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn task_report_copy_filename_only_matches_the_fixed_task_markdown_pattern() {
+        assert!(is_task_report_copy_filename("task-42-snapshot.md", 42));
+        assert!(is_task_report_copy_filename(
+            "task-42-2026-07-30T10-42-00.md",
+            42
+        ));
+        assert!(!is_task_report_copy_filename("task-42-.md", 42));
+        assert!(!is_task_report_copy_filename("task-42-snapshot.md.bak", 42));
+        assert!(!is_task_report_copy_filename("task-43-snapshot.md", 42));
+        assert!(!is_task_report_copy_filename("task-42-..-outside.md", 42));
+    }
+
+    #[test]
+    fn deleting_task_report_copies_is_non_recursive_and_keeps_other_files() {
+        let root = std::env::temp_dir().join(format!(
+            "focus-task-report-purge-test-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        let directory = report_export_directory(&root);
+        fs::create_dir_all(&directory).unwrap();
+
+        let matching_first = directory.join("task-42-snapshot.md");
+        let matching_second = directory.join("task-42-2026-07-30.md");
+        let other_task = directory.join("task-43-snapshot.md");
+        let non_markdown = directory.join("task-42-snapshot.md.bak");
+        let nested = directory.join("task-42-nested.md");
+        fs::write(&matching_first, "# 删除").unwrap();
+        fs::write(&matching_second, "# 删除").unwrap();
+        fs::write(&other_task, "# 保留").unwrap();
+        fs::write(&non_markdown, "# 保留").unwrap();
+        fs::create_dir_all(&nested).unwrap();
+        fs::write(nested.join("inside.md"), "# 保留").unwrap();
+
+        assert_eq!(
+            delete_task_report_copies_from_directory(&root, 42).unwrap(),
+            2
+        );
+        assert!(!matching_first.exists());
+        assert!(!matching_second.exists());
+        assert!(other_task.is_file());
+        assert!(non_markdown.is_file());
+        assert!(nested.is_dir());
+        assert!(nested.join("inside.md").is_file());
+        assert!(delete_task_report_copies_from_directory(&root, 0).is_err());
 
         fs::remove_dir_all(&root).unwrap();
     }

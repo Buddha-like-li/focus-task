@@ -3,6 +3,7 @@ import { defineStore } from 'pinia'
 import * as api from '@/api'
 import { normalizeDateTimeLocal } from '@/utils/dateTime'
 import { useSettingsStore } from '@/stores/settingsStore'
+import { useTrashStore } from '@/stores/trashStore'
 import { appLogger } from '@/composables/useAppLogger'
 
 export interface Task {
@@ -41,11 +42,21 @@ export interface Task {
   transferNote?: string
 }
 
+export type TaskView =
+  | 'matrix'
+  | 'today'
+  | 'done'
+  | 'reports'
+  | 'summary'
+  | 'requirements'
+  | 'teammates'
+  | 'trash'
+
 export const useTaskStore = defineStore('tasks', () => {
   const settings = useSettingsStore()
   const tasks = ref<Task[]>([])
   const selectedTaskId = ref<string | null>(null)
-  const currentView = ref<'matrix' | 'today' | 'done' | 'reports' | 'summary' | 'requirements'>('matrix')
+  const currentView = ref<TaskView>('matrix')
   const searchQuery = ref('')
   const filterQuadrant = ref<number | null>(null)
   const loading = ref(false)
@@ -247,23 +258,53 @@ export const useTaskStore = defineStore('tasks', () => {
     })
   }
 
-  async function removeTask(clientId: string): Promise<boolean> {
+  function taskTreeClientIds(rootClientId: string): Set<string> {
+    const ids = new Set([rootClientId])
+    let foundDescendant = true
+    while (foundDescendant) {
+      foundDescendant = false
+      for (const task of tasks.value) {
+        if (task.parentTaskId && ids.has(task.parentTaskId) && !ids.has(task.clientId)) {
+          ids.add(task.clientId)
+          foundDescendant = true
+        }
+      }
+    }
+    return ids
+  }
+
+  /** 普通删除仅将任务移入垃圾桶，用户可在垃圾桶中恢复或彻底删除。 */
+  async function moveTaskToTrash(clientId: string): Promise<boolean> {
     const requestRevision = sessionRevision
     const task = tasks.value.find(item => item.clientId === clientId)
     if (!task?.id) return false
     try {
-      await api.deleteTask(task.id)
+      await api.moveTaskToTrash(task.id)
       if (!isCurrentSession(requestRevision)) return false
-      tasks.value = tasks.value.filter(item => item.clientId !== clientId)
-      if (selectedTaskId.value === clientId) selectedTaskId.value = null
+      const movedTaskIds = taskTreeClientIds(clientId)
+      tasks.value = tasks.value.filter(item => !movedTaskIds.has(item.clientId))
+      if (selectedTaskId.value && movedTaskIds.has(selectedTaskId.value)) selectedTaskId.value = null
+      useTrashStore().recordMovedTask(task)
       serviceError.value = ''
       return true
     } catch (error) {
       if (!isCurrentSession(requestRevision)) return false
-      serviceError.value = error instanceof Error ? error.message : '删除任务失败'
-      appLogger.warn('[tasks] removeTask failed', error)
+      serviceError.value = error instanceof Error ? error.message : '移入垃圾桶失败'
+      appLogger.warn('[tasks] moveTaskToTrash failed', error)
       return false
     }
+  }
+
+  /** @deprecated 使用 moveTaskToTrash；旧调用仍保持“移入垃圾桶”语义。 */
+  async function removeTask(clientId: string): Promise<boolean> {
+    return moveTaskToTrash(clientId)
+  }
+
+  /** 在服务端永久删除成功后清除当前账号内存中的旧任务副本。 */
+  function forgetTask(task: Pick<Task, 'id' | 'clientId'>) {
+    const removedTaskIds = taskTreeClientIds(task.clientId)
+    tasks.value = tasks.value.filter((item) => item.id !== task.id && !removedTaskIds.has(item.clientId))
+    if (selectedTaskId.value && removedTaskIds.has(selectedTaskId.value)) selectedTaskId.value = null
   }
 
   async function reorderTasks(items: { clientId: string; sortOrder: number }[]): Promise<boolean> {
@@ -276,7 +317,7 @@ export const useTaskStore = defineStore('tasks', () => {
     selectedTaskId.value = clientId
   }
 
-  function setView(view: 'matrix' | 'today' | 'done' | 'reports' | 'summary' | 'requirements') {
+  function setView(view: TaskView) {
     currentView.value = view
   }
 
@@ -302,7 +343,9 @@ export const useTaskStore = defineStore('tasks', () => {
     updateTask,
     ensurePersisted,
     toggleDone,
+    moveTaskToTrash,
     removeTask,
+    forgetTask,
     reorderTasks,
     selectTask,
     setView,

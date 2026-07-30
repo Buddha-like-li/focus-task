@@ -33,6 +33,7 @@ import { useAuthStore } from './authStore'
 import { useTaskStore } from './taskStore'
 import { useRequirementStore } from './requirementStore'
 import { useTeamStore } from './teamStore'
+import { useTrashStore } from './trashStore'
 
 describe('账号会话恢复与切换', () => {
   beforeEach(() => {
@@ -151,6 +152,7 @@ describe('账号会话恢复与切换', () => {
     const taskStore = useTaskStore()
     const requirementStore = useRequirementStore()
     const teamStore = useTeamStore()
+    const trashStore = useTrashStore()
 
     auth.token = 'service-token'
     auth.username = 'alice'
@@ -187,6 +189,25 @@ describe('账号会话恢复与切换', () => {
       updatedAt: '',
     })
     teamStore.team = { id: 1, name: '账号 A 的团队', creatorId: 1, createdAt: '', members: [] }
+    trashStore.tasks = [{
+      id: 2,
+      clientId: 'trashed-task-a',
+      quadrant: 1,
+      title: '账号 A 的已删除任务',
+      notes: '',
+      done: false,
+      startAt: '',
+      due: '',
+      tag: '',
+      repeat: 'none',
+      notifyOnStart: true,
+      notifyOnDue: true,
+      notifyOnOverdue: true,
+      showInFocus: false,
+      sortOrder: 0,
+      doneAt: '',
+      deleted: true,
+    }]
 
     await expect(auth.switchAccount()).resolves.toBe(true)
 
@@ -197,6 +218,7 @@ describe('账号会话恢复与切换', () => {
     expect(taskStore.tasks).toEqual([])
     expect(requirementStore.requirements).toEqual([])
     expect(teamStore.team).toBeNull()
+    expect(trashStore.tasks).toEqual([])
   })
 
   it('退出并清除登录状态时只清除当前账号，且允许移除账号名', async () => {

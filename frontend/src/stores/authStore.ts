@@ -11,6 +11,7 @@ import {
   restoreAuthAccount,
   saveAuthState,
 } from '@/utils/secureStorage'
+import { useTrashStore } from '@/stores/trashStore'
 
 const SESSION_SAVE_WARNING = '本次登录未能在本机记住，关闭应用后需要重新登录。'
 
@@ -371,6 +372,7 @@ export const useAuthStore = defineStore('auth', () => {
     useTaskStore().clearSessionState()
     useRequirementStore().clearSessionState()
     useTeamStore().clearSessionState()
+    useTrashStore().clearSessionState()
   }
 
   return {

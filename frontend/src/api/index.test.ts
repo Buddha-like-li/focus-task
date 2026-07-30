@@ -20,9 +20,12 @@ import {
   getMe,
   listTaskAttachments,
   listTasks,
+  listTrashTasks,
   login,
   onAuthExpired,
+  permanentlyDeleteTask,
   promoteRequirement,
+  restoreTrashTask,
   setAuthToken,
 } from './index'
 
@@ -131,5 +134,35 @@ describe('API network failures', () => {
       expect.objectContaining({ method: 'POST', body: JSON.stringify({ quadrant: 2 }) }),
     )
     expect(task).toMatchObject({ clientId: 'promoted-task', quadrant: 2 })
+  })
+
+  it('uses the dedicated garbage-bin endpoints without reusing the active-task list', async () => {
+    fetchMock
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => [{ id: 7, client_id: 'trashed-task', deleted: true }],
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ id: 7, client_id: 'trashed-task', deleted: false }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ ok: true, permanently_deleted: true, cleanup_pending: true }),
+      })
+
+    const trashed = await listTrashTasks()
+    const restored = await restoreTrashTask(7)
+    const deletion = await permanentlyDeleteTask(7)
+
+    expect(trashed).toMatchObject([{ id: 7, clientId: 'trashed-task', deleted: true }])
+    expect(restored).toMatchObject({ id: 7, clientId: 'trashed-task', deleted: false })
+    expect(deletion).toEqual({ ok: true, permanentlyDeleted: true, cleanupPending: true })
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('http://127.0.0.1:18765/api/tasks/trash')
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({ method: 'GET' })
+    expect(fetchMock.mock.calls[1]?.[0]).toBe('http://127.0.0.1:18765/api/tasks/7/restore')
+    expect(fetchMock.mock.calls[1]?.[1]).toMatchObject({ method: 'POST' })
+    expect(fetchMock.mock.calls[2]?.[0]).toBe('http://127.0.0.1:18765/api/tasks/7/permanent')
+    expect(fetchMock.mock.calls[2]?.[1]).toMatchObject({ method: 'DELETE' })
   })
 })
