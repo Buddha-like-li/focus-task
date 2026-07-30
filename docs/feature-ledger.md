@@ -13,7 +13,7 @@
 
 | 能力 | 用户可见行为 | 运行时代码/测试证据 | 状态 |
 |---|---|---|---|
-| 登录与会话 | 用户可注册、登录和退出；登录成功后仅使用 Windows Credential Manager 保存服务令牌和用户名，不保存明文密码。退出或切换账号会清空账号级缓存；旧账号的延迟响应不能覆盖新账号。 | `frontend/src/stores/authStore.ts`、`frontend/src/utils/secureStorage.ts`、`frontend/src-tauri/src/lib.rs`、`frontend/src/stores/authStore.test.ts`、`frontend/src/stores/sessionIsolation.test.ts`、`frontend/src/utils/secureStorage.test.ts`、`docs/task-records/2026-07-29-codex-auth-desktop-session-logout.md` | 已审核合入，随 v2.3.8 发布 |
+| 登录与会话 | 桌面端登录成功后以当前 Windows 用户绑定的本机加密会话仓保存令牌和用户名，不保存明文密码；重新打开可恢复最近账号。用户名输入框可选择最多 8 个已记住账号，有效会话可直接恢复，失效会话保留用户名并要求重新输入密码。设置页区分切换账号、退出并清除当前会话、移除本机账号；旧账号的延迟响应不能覆盖新账号。 | `frontend/src/stores/authStore.ts`、`frontend/src/utils/secureStorage.ts`、`frontend/src/views/LoginView.vue`、`frontend/src/views/SettingsView.vue`、`frontend/src-tauri/src/lib.rs`、`frontend/src/stores/authStore.test.ts`、`frontend/src/utils/secureStorage.test.ts`、`frontend/src/views/LoginView.test.ts`、`frontend/src/views/SettingsView.test.ts`、`docs/task-records/2026-07-30-codex-auth-resilient-session-selector.md`、`docs/task-records/2026-07-30-codex-auth-account-selector-frontend.md` | 已独立审核，待 v2.3.9 发布 |
 | 任务工作台 | 四象限、今日、已完成、汇总视图；任务详情、状态、日期、优先级、子任务、重复和提醒偏好。 | `frontend/src/views/MatrixView.vue`、`TodayView.vue`、`DoneView.vue`、`SummaryView.vue`、`frontend/src/stores/taskStore.ts` | 当前源码包含 |
 | 自定义任务归属 | 任务详情的“任务归属”可自由输入或从建议中选择；空白值统一为“项目管理”，保存期间会串行化，避免快速修改的失败回滚覆盖后续值。 | `frontend/src/components/DetailPanel.vue`、`frontend/src/components/DetailPanel.test.ts`、`frontend/src/stores/taskStore.ts`、`docs/task-records/2026-07-29-codex-task-belonging-custom-input.md` | 已审核合入，随 v2.3.8 发布 |
 | 需求池转四象限任务 | 需求池卡片可选择四个象限并转换为任务。成功后任务进入四象限工作台并选中；失败时需求保留。账号切换期间旧转换响应不会写入新账号。 | `frontend/src/views/RequirementsView.vue`、`frontend/src/stores/requirementStore.ts`、`frontend/src/api/index.ts`、`frontend/src/views/RequirementsView.test.ts`、`frontend/src/stores/requirementStore.test.ts`、`docs/task-records/2026-07-29-codex-requirement-promote-client.md`；对应本地服务合入 `1e3c010` | 已审核合入，随 v2.3.8 发布 |
@@ -50,6 +50,7 @@
 - `v2.3.6` 中文发布与更新说明已完成独立实现与审核：实现提交为 `1329607`，审核未发现 P0/P1；中文说明的正例、英文/空白反例、工作流解析、前端 36/36、production build 和 diff 检查均通过。`main` 与 tag 已推送，详见 `task-records/2026-07-29-codex-chinese-release-notes.md`。
 - 既有 `v2.3.5` 已在不移动 tag、不替换安装包或签名的前提下修正 Release 标题、正文和 `latest.json.notes`；远程复核确认仍指向原有 Windows 安装包。
 - v2.3.8 将汇总此前未打 tag 的登录持久化、任务归属、需求转任务和本机报告文件动作，并加入已审核的页面布局与长文本优化；只构建 Windows 客户端，不改变本地服务、用户数据或 API 契约。发布前验证、书面例外和推送证据见 `task-records/2026-07-29-codex-v2-3-8-ui-polish-release.md`。
+- v2.3.9 修复桌面端登录状态保存失败：客户端不再使用失效的凭据管理器依赖，改用当前 Windows 用户范围的本机加密多账号会话仓。集成验证为前端 83/83、Rust 15/15、生产构建、格式和差异检查；本地 NSIS 安装包已生成。详细证据见 2026-07-30 的认证任务记录与发布任务记录。
 
 ## 已知风险与门禁
 
@@ -58,6 +59,8 @@
 | P0 | 旧桌面数据兼容。 | 客户端不会迁移、覆盖、备份或删除旧数据。服务端导入和 bootstrap 防护已在受控本地 `.7`/r13 交付中独立复核并运行时证明，保留 3 用户、18 任务和 61 快照；本次 Windows 验证发布的书面例外只允许安装并验证本机服务，不得宣称旧任务自动兼容，详见 `task-records/2026-07-29-codex-v2-3-3-windows-validation-release.md`。 |
 | P1 | 新客户端与本地服务的 API 契约尚需端到端验收。 | 任何服务镜像、认证、附件或数据迁移变化都要在两个仓库建立对应任务记录并联调。 |
 | P2 | `frontend.log` 还没有容量上限或轮转策略。 | 建立独立客户端修复任务后处理，并在功能总账更新结论。 |
+| P2 | 已退出且无有效会话的账号名没有单独的选择页移除入口。 | 可选择该账号后重新登录，再在设置页移除；后续可建立独立账号管理界面任务。 |
+| P2 | 原凭据管理器遗留会话不迁移或主动清理。 | v2.3.9 首次升级需重新登录一次；新版本不会读取或使用遗留会话。 |
 
 ## 发布状态
 
@@ -65,6 +68,7 @@
 - `v2.3.4` 已作为报告文档本机保存与文件夹定位补丁公开发布；签名 Release、`.sig` 与 `latest.json` 已由 GitHub Actions `30418166272` 成功生成。
 - `v2.3.5` 是 Windows updater 体验修复版，已合入 `main`、推送并完成公开签名 Release；其 Release 标题、正文与更新清单说明已修正为中文。本地 NSIS 已验证。它不改变客户端/服务边界、服务 API、数据卷或旧任务兼容承诺。
 - `v2.3.6` 是中文发布与更新说明统一版：最终验证已完成，tag 已推送并触发签名 CI；CI 成功前不得宣称公开 Release 已可用。它不改变客户端/服务边界、服务 API、数据卷或旧任务兼容承诺。
+- `v2.3.9` 是桌面端加密多账号登录状态修复版：已完成独立实现、审核和整合验证，待集成人创建 tag 并推送后由签名工作流生成 Windows 安装包与更新清单。它不改变本地服务 API、用户任务数据、容器或旧任务兼容承诺。
 - 任何下一次 tag 必须在集成人确认版本、签名配置、独立审核和客户端/服务联调后创建；密码只在私钥加密时需要。
 - 远程分支只保留干净客户端 `main`；该客户端/服务边界不随本 Release 改变。
 - 服务镜像和可选数据卷归档均由服务仓库交付；它们永远不是本客户端 GitHub Release 的资产。
