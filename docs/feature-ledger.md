@@ -25,11 +25,11 @@
 | 中文发布与更新说明 | GitHub Release 标题、正文、更新清单和桌面端更新弹窗共用同一份中文说明；发布前会拒绝空白或含英文的用户说明。 | `docs/release-notes/`、`scripts/validate-release-notes.sh`、`.github/workflows/release.yml`、`frontend/src/composables/useAppUpdate.ts`、`frontend/src/views/SettingsView.vue`、`frontend/src/views/AppLayout.vue` | `v2.3.6` tag 已推送，签名 CI 待完成 |
 | 服务不可用反馈 | 本机服务不可达时显示明确连接信息；恢复服务后可重新加载。 | `frontend/src/api/base.ts`、`frontend/src/views/AppLayout.vue`、`frontend/src/views/AppLayout.test.ts` | 当前源码包含 |
 
-## 待集成客户端功能
+## 已合入待联调客户端功能
 
 | 功能 | 当前状态 | 约束与证据 |
 |---|---|---|
-| 垃圾桶与彻底删除 | 初始实现提交 `0631ece`、P1 修复提交 `06e3db4` 位于分支 `codex/trash-client-ui`；客户端已由独立审核者复核通过，待服务端联调和集成人合入。普通删除将显示为“移入垃圾桶”；首次删除前会确认服务支持垃圾桶，旧服务会提示更新镜像且不发送删除；垃圾桶可恢复，彻底删除使用中文二次确认；服务端返回 `cleanup_pending` 时只提示“服务记录已删除，文件清理待处理”，不误报全部完成。 | `docs/task-records/2026-07-30-codex-trash-client-ui.md`；父子任务本机副本按垃圾桶树分别清理；本机报告副本仅限受控实体 `Documents\Focus Task\Reports` 中严格匹配任务 ID 的应用托管 Markdown 文件，拒绝符号链接、目录联接/重解析点，不能按标题或任意路径删除。 |
+| 垃圾桶与彻底删除 | 客户端主线已合入 `e612818`；普通删除显示为“移入垃圾桶”，首次删除会确认服务支持垃圾桶，旧服务会提示更新镜像且不发送删除；垃圾桶可恢复，彻底删除使用中文二次确认；服务端返回 `cleanup_pending` 时只提示“服务记录已删除，文件清理待处理”，不误报全部完成。服务端 API 已独立复核并合入本地主线，隔离容器联调仍是发布与容器替换门禁。 | `docs/task-records/2026-07-30-codex-trash-client-ui.md`；父子任务本机副本按垃圾桶树分别清理；本机报告副本仅限受控实体 `Documents\Focus Task\Reports` 中严格匹配任务 ID 的应用托管 Markdown 文件，拒绝符号链接、目录联接/重解析点，不能按标题或任意路径删除。 |
 
 ## 客户端/服务边界
 
