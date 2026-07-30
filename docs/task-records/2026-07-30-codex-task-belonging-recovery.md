@@ -14,10 +14,10 @@
 | 基线 SHA | `8bd8935161a8b09d3f15e0952d6c52a9a2f81dd8` |
 | 功能分支 | `codex/task-belonging-recovery` |
 | 实现者 | `task_belonging_impl` |
-| 审核者 | `/root/task_belonging_reviewer_v2`（首轮）；修复复核待集成人指定 |
+| 审核者 | `/root/task_belonging_reviewer_v2`（首轮与修复复核） |
 | 集成人 | `/root` |
 | 实现 SHA | `fde72b42cc6fa7fe6cfaca45a4a4a9d38a2fcff3` |
-| 审核 SHA | 首轮审核对象 `fde72b42cc6fa7fe6cfaca45a4a4a9d38a2fcff3` 与 `e1de3d0aba3f6d59d45fd737bde35c8c25373340`；修复复核待填写 |
+| 审核 SHA | 首轮审核对象 `fde72b42cc6fa7fe6cfaca45a4a4a9d38a2fcff3` 与 `e1de3d0aba3f6d59d45fd737bde35c8c25373340`；修复复核对象 `60f7460e7167c8e099ed77e81980729d8f744e16` 与 `268fb0332ac46bc32c9019c703e56278e6c09e08`，审核均为只读结论，无独立代码提交 |
 
 ## 诊断与设计
 
@@ -47,15 +47,18 @@
 ### 修复复核
 
 - `60f7460e7167c8e099ed77e81980729d8f744e16`：历史选择框的 `mousedown` 标记本次焦点切换；输入框由该点击引起的 `change`/`blur` 不再先保存草稿，随后选择框的 `change` 直接保存选中归属。新增事件顺序回归测试。
-- 待集成人指定未参与本次修复的审核者复核该提交，重点检查原生 WebView 下的 mousedown、change、blur 顺序，以及不影响回车、失焦和保存按钮路径。
+- `/root/task_belonging_reviewer_v2` 对修复独立复核后批准合入：无 P0/P1。确认抑制标志仅作用于由历史选择点击产生的输入 `change`/`blur`，不会影响保存按钮、回车或历史选择后的直接保存；定时器只保存组件局部状态，不读写任务或账号状态。
+- P2：用户打开历史选择列表后取消选择时，该次输入失焦保存会被有意跳过，未保存草稿在随后切换任务时可能丢失。此行为避免了错误覆盖历史选择；若需要“任意失焦必保存”，应另立交互设计任务。
 
 ### 验证
 
 - `npm test -- --run src/components/DetailPanel.test.ts`：通过，10/10。
 - `npm test -- --run`：通过，88/88。
 - `npm run build`：通过，包含类型检查与生产构建。
-- `git diff --check`：通过。
+- `cargo test -q`、`cargo fmt --check` 与 `git diff --check`：通过。
+- 集成人在合入后的 `main` 复跑上述验证均通过；`v2.3.10` 发布说明非空且不含英文字母。当前 Windows 工作树将既有校验脚本转换为本机换行符，无法直接由 Bash 解释；已按该脚本的相同规则完成等价校验，签名工作流在 Linux 检出时仍执行原校验脚本。
 
 ### 集成
 
-- 仅集成人可在独立审核通过后更新功能总账、合入、推送或发布。本实现未合入、未推送、未更新版本号或发布说明。
+- 集成人 `/root` 已将审核后的功能分支快进合入客户端 `main`，集成 SHA 为 `268fb0332ac46bc32c9019c703e56278e6c09e08`。
+- 集成人已完成最终发布验证、功能总账、版本号和中文发布说明；待提交并推送 `v2.3.10` tag 后，由签名工作流生成 Windows 安装包和更新清单。

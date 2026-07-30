@@ -1,6 +1,6 @@
 [package]
 name = "focus-task"
-version = "2.3.9"
+version = "2.3.10"
 description = "Focus Task — 聚焦任务"
 authors = ["you"]
 edition = "2021"

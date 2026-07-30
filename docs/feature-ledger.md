@@ -13,9 +13,9 @@
 
 | 能力 | 用户可见行为 | 运行时代码/测试证据 | 状态 |
 |---|---|---|---|
-| 登录与会话 | 桌面端登录成功后以当前 Windows 用户绑定的本机加密会话仓保存令牌和用户名，不保存明文密码；重新打开可恢复最近账号。用户名输入框可选择最多 8 个已记住账号，有效会话可直接恢复，失效会话保留用户名并要求重新输入密码。设置页区分切换账号、退出并清除当前会话、移除本机账号；旧账号的延迟响应不能覆盖新账号。 | `frontend/src/stores/authStore.ts`、`frontend/src/utils/secureStorage.ts`、`frontend/src/views/LoginView.vue`、`frontend/src/views/SettingsView.vue`、`frontend/src-tauri/src/lib.rs`、`frontend/src/stores/authStore.test.ts`、`frontend/src/utils/secureStorage.test.ts`、`frontend/src/views/LoginView.test.ts`、`frontend/src/views/SettingsView.test.ts`、`docs/task-records/2026-07-30-codex-auth-resilient-session-selector.md`、`docs/task-records/2026-07-30-codex-auth-account-selector-frontend.md` | 已独立审核，待 v2.3.9 发布 |
+| 登录与会话 | 桌面端登录成功后以当前 Windows 用户绑定的本机加密会话仓保存令牌和用户名，不保存明文密码；重新打开可恢复最近账号。用户名输入框可选择最多 8 个已记住账号，有效会话可直接恢复，失效会话保留用户名并要求重新输入密码。设置页区分切换账号、退出并清除当前会话、移除本机账号；旧账号的延迟响应不能覆盖新账号。 | `frontend/src/stores/authStore.ts`、`frontend/src/utils/secureStorage.ts`、`frontend/src/views/LoginView.vue`、`frontend/src/views/SettingsView.vue`、`frontend/src-tauri/src/lib.rs`、`frontend/src/stores/authStore.test.ts`、`frontend/src/utils/secureStorage.test.ts`、`frontend/src/views/LoginView.test.ts`、`frontend/src/views/SettingsView.test.ts`、`docs/task-records/2026-07-30-codex-auth-resilient-session-selector.md`、`docs/task-records/2026-07-30-codex-auth-account-selector-frontend.md` | 已独立审核，随 v2.3.9 发布 |
 | 任务工作台 | 四象限、今日、已完成、汇总视图；任务详情、状态、日期、优先级、子任务、重复和提醒偏好。 | `frontend/src/views/MatrixView.vue`、`TodayView.vue`、`DoneView.vue`、`SummaryView.vue`、`frontend/src/stores/taskStore.ts` | 当前源码包含 |
-| 自定义任务归属 | 任务详情的“任务归属”可自由输入或从建议中选择；空白值统一为“项目管理”，保存期间会串行化，避免快速修改的失败回滚覆盖后续值。 | `frontend/src/components/DetailPanel.vue`、`frontend/src/components/DetailPanel.test.ts`、`frontend/src/stores/taskStore.ts`、`docs/task-records/2026-07-29-codex-task-belonging-custom-input.md` | 已审核合入，随 v2.3.8 发布 |
+| 自定义任务归属 | 任务详情会明确显示当前归属；可直接输入新归属并通过保存、回车或失焦提交，也可从完整历史列表选择。历史列表包含当前账号已软删除任务的归属，避免历史值被活动任务筛选隐藏；空白值统一为“项目管理”，保存期间仍串行化。 | `frontend/src/components/DetailPanel.vue`、`frontend/src/components/DetailPanel.test.ts`、`frontend/src/stores/taskStore.ts`、`docs/task-records/2026-07-29-codex-task-belonging-custom-input.md`、`docs/task-records/2026-07-30-codex-task-belonging-recovery.md` | 已独立审核，待 v2.3.10 发布 |
 | 需求池转四象限任务 | 需求池卡片可选择四个象限并转换为任务。成功后任务进入四象限工作台并选中；失败时需求保留。账号切换期间旧转换响应不会写入新账号。 | `frontend/src/views/RequirementsView.vue`、`frontend/src/stores/requirementStore.ts`、`frontend/src/api/index.ts`、`frontend/src/views/RequirementsView.test.ts`、`frontend/src/stores/requirementStore.test.ts`、`docs/task-records/2026-07-29-codex-requirement-promote-client.md`；对应本地服务合入 `1e3c010` | 已审核合入，随 v2.3.8 发布 |
 | 内容与文件 | 任务 Markdown、普通附件、PRD 附件，以及日报/周报/月报的预览和下载。 | `frontend/src/components/ContentModal.vue`、`DetailPanel.vue`、`frontend/src/api/index.ts` | 当前源码包含 |
 | 报告文档本机文件操作 | 文档归档中的每份任务 Markdown 可预览、保存到 Windows 本机，并可首次直接保存后定位到所在文件夹；同名用户手工编辑的文件不会被后续定位操作覆盖。汇总报告同样保存到可见目录。桌面端目录为 `Documents\Focus Task\Reports`，浏览器开发模式退回普通下载。 | `frontend/src/views/ReportsView.vue`、`frontend/src/utils/reportFileActions.ts`、`frontend/src/views/ReportsView.test.ts`、`frontend/src-tauri/src/lib.rs`、`docs/task-records/2026-07-29-codex-report-open-local-file.md` | 已审核合入，随 v2.3.8 发布 |
@@ -51,6 +51,7 @@
 - 既有 `v2.3.5` 已在不移动 tag、不替换安装包或签名的前提下修正 Release 标题、正文和 `latest.json.notes`；远程复核确认仍指向原有 Windows 安装包。
 - v2.3.8 将汇总此前未打 tag 的登录持久化、任务归属、需求转任务和本机报告文件动作，并加入已审核的页面布局与长文本优化；只构建 Windows 客户端，不改变本地服务、用户数据或 API 契约。发布前验证、书面例外和推送证据见 `task-records/2026-07-29-codex-v2-3-8-ui-polish-release.md`。
 - v2.3.9 修复桌面端登录状态保存失败：客户端不再使用失效的凭据管理器依赖，改用当前 Windows 用户范围的本机加密多账号会话仓。集成验证为前端 83/83、Rust 15/15、生产构建、格式和差异检查；本地 NSIS 安装包已生成。详细证据见 2026-07-30 的认证任务记录与发布任务记录。
+- v2.3.10 修复任务归属在 Windows 桌面端只显示当前值、难以新增或选择历史值的问题：已完成独立实现、首轮审核、修复复核与前端 88/88、Rust 测试、生产构建、格式和差异检查验证。它不改变本机服务接口、服务镜像、容器或用户数据，详见 `task-records/2026-07-30-codex-task-belonging-recovery.md`。
 
 ## 已知风险与门禁
 
@@ -61,6 +62,7 @@
 | P2 | `frontend.log` 还没有容量上限或轮转策略。 | 建立独立客户端修复任务后处理，并在功能总账更新结论。 |
 | P2 | 已退出且无有效会话的账号名没有单独的选择页移除入口。 | 可选择该账号后重新登录，再在设置页移除；后续可建立独立账号管理界面任务。 |
 | P2 | 原凭据管理器遗留会话不迁移或主动清理。 | v2.3.9 首次升级需重新登录一次；新版本不会读取或使用遗留会话。 |
+| P2 | 取消历史归属选择时的草稿处理。 | 用户打开历史归属列表又取消时，当次输入失焦不会自动保存，随后切换任务可能丢弃草稿；这是避免错误覆盖选择的受控取舍，后续以独立交互任务决定是否提示或保留草稿。 |
 
 ## 发布状态
 
@@ -68,7 +70,8 @@
 - `v2.3.4` 已作为报告文档本机保存与文件夹定位补丁公开发布；签名 Release、`.sig` 与 `latest.json` 已由 GitHub Actions `30418166272` 成功生成。
 - `v2.3.5` 是 Windows updater 体验修复版，已合入 `main`、推送并完成公开签名 Release；其 Release 标题、正文与更新清单说明已修正为中文。本地 NSIS 已验证。它不改变客户端/服务边界、服务 API、数据卷或旧任务兼容承诺。
 - `v2.3.6` 是中文发布与更新说明统一版：最终验证已完成，tag 已推送并触发签名 CI；CI 成功前不得宣称公开 Release 已可用。它不改变客户端/服务边界、服务 API、数据卷或旧任务兼容承诺。
-- `v2.3.9` 是桌面端加密多账号登录状态修复版：已完成独立实现、审核和整合验证，待集成人创建 tag 并推送后由签名工作流生成 Windows 安装包与更新清单。它不改变本地服务 API、用户任务数据、容器或旧任务兼容承诺。
+- `v2.3.9` 是桌面端加密多账号登录状态修复版：已完成公开签名 Release、Windows 安装包、签名和更新清单。它不改变本地服务 API、用户任务数据、容器或旧任务兼容承诺。
+- `v2.3.10` 是任务归属交互恢复版：独立实现、审核、修复复核和最终验证已通过，待集成人创建 tag 并推送后由签名工作流生成 Windows 安装包与更新清单。它不改变本地服务 API、用户任务数据、容器或旧任务兼容承诺。
 - 任何下一次 tag 必须在集成人确认版本、签名配置、独立审核和客户端/服务联调后创建；密码只在私钥加密时需要。
 - 远程分支只保留干净客户端 `main`；该客户端/服务边界不随本 Release 改变。
 - 服务镜像和可选数据卷归档均由服务仓库交付；它们永远不是本客户端 GitHub Release 的资产。
