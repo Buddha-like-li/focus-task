@@ -14,10 +14,10 @@
 | 基线 SHA | `8bd8935161a8b09d3f15e0952d6c52a9a2f81dd8` |
 | 功能分支 | `codex/task-belonging-recovery` |
 | 实现者 | `task_belonging_impl` |
-| 审核者 | 待集成人指定未参与实现的审核者 |
+| 审核者 | `/root/task_belonging_reviewer_v2`（首轮）；修复复核待集成人指定 |
 | 集成人 | `/root` |
 | 实现 SHA | `fde72b42cc6fa7fe6cfaca45a4a4a9d38a2fcff3` |
-| 审核 SHA | 待独立审核后填写 |
+| 审核 SHA | 首轮审核对象 `fde72b42cc6fa7fe6cfaca45a4a4a9d38a2fcff3` 与 `e1de3d0aba3f6d59d45fd737bde35c8c25373340`；修复复核待填写 |
 
 ## 诊断与设计
 
@@ -41,16 +41,18 @@
 
 ### 独立审核
 
-- 待集成人指定未参与实现的审核者。审核应重点核对：当前归属回显、可输入保存、历史选择、失败回滚、连续编辑串行化、账号切换期间的任务状态隔离，以及不改变 `task_belonging` 请求字段。
+- `/root/task_belonging_reviewer_v2` 独立审核首轮实现，结论为批准合入：未发现 P0/P1；组件测试 9/9、全量前端测试 87/87、生产构建和差异检查均通过。
+- 审核记录一个 P2 交互边缘：输入框存在未保存文字时，点击历史选择框会先触发输入失焦保存，使选择框在保存期间禁用，部分 Windows WebView 可能需要再次点击。该问题不阻塞首轮批准，但必须在同一功能分支修复并复核。
 
 ### 修复复核
 
-- 如审核发现问题，由集成人指定修复者处理，并在此处补充修复提交与独立复核结论。
+- `60f7460e7167c8e099ed77e81980729d8f744e16`：历史选择框的 `mousedown` 标记本次焦点切换；输入框由该点击引起的 `change`/`blur` 不再先保存草稿，随后选择框的 `change` 直接保存选中归属。新增事件顺序回归测试。
+- 待集成人指定未参与本次修复的审核者复核该提交，重点检查原生 WebView 下的 mousedown、change、blur 顺序，以及不影响回车、失焦和保存按钮路径。
 
 ### 验证
 
-- `npm test -- --run src/components/DetailPanel.test.ts`：通过，9/9。
-- `npm test -- --run`：通过，87/87。
+- `npm test -- --run src/components/DetailPanel.test.ts`：通过，10/10。
+- `npm test -- --run`：通过，88/88。
 - `npm run build`：通过，包含类型检查与生产构建。
 - `git diff --check`：通过。
 
