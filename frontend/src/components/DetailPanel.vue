@@ -49,21 +49,39 @@
       <div class="detail-field-grid">
         <div class="detail-field">
           <label for="task-belonging-input">任务归属</label>
-          <input
-            id="task-belonging-input"
-            data-testid="task-belonging-input"
-            type="text"
-            list="task-belonging-options"
-            :value="normalizeTaskBelonging(task.taskBelonging)"
+          <div class="task-belonging-editor">
+            <input
+              id="task-belonging-input"
+              data-testid="task-belonging-input"
+              type="text"
+              :value="taskBelongingDraft"
+              :disabled="readonly || taskBelongingSaving"
+              :aria-busy="taskBelongingSaving"
+              maxlength="100"
+              placeholder="输入新的任务归属"
+              @input="setTaskBelongingDraft"
+              @change="saveTaskBelonging"
+              @blur="saveTaskBelonging"
+              @keydown.enter.prevent="saveTaskBelonging"
+            />
+            <button
+              type="button"
+              class="task-belonging-save"
+              :disabled="readonly || taskBelongingSaving"
+              @click="saveTaskBelonging"
+            >{{ taskBelongingSaving ? '保存中' : '保存' }}</button>
+          </div>
+          <select
+            id="task-belonging-history"
+            data-testid="task-belonging-history"
+            class="task-belonging-history"
+            aria-label="历史任务归属"
             :disabled="readonly || taskBelongingSaving"
-            :aria-busy="taskBelongingSaving"
-            maxlength="100"
-            placeholder="输入或选择任务归属"
-            @change="saveTaskBelonging"
-          />
-          <datalist id="task-belonging-options">
-            <option v-for="option in taskBelongingSuggestions" :key="option" :value="option" />
-          </datalist>
+            @change="selectTaskBelongingSuggestion"
+          >
+            <option value="">选择历史归属</option>
+            <option v-for="option in taskBelongingSuggestions" :key="option" :value="option">{{ option }}</option>
+          </select>
         </div>
         <div class="detail-field">
           <label>类别</label>
@@ -363,6 +381,7 @@ const attachmentError = ref('')
 const contentModalOpen = ref(false)
 const defaultTaskBelonging = '项目管理'
 const taskBelongingOptions = ['数据预处理', 'AI网格员-Fastgpt工作流版本', 'AI网格员-Fastgpt智能体版本', 'AI网格员-中移版本', '城运中心', '三流一体化', defaultTaskBelonging, '公文', '数据预处理平台', 'AI网格员-连小警版本', '桌面RPA']
+const taskBelongingDraft = ref(defaultTaskBelonging)
 const taskBelongingSaving = ref(false)
 const taskBelongingSavingClientId = ref<string | null>(null)
 const pendingTaskBelonging = ref<string | null>(null)
@@ -371,8 +390,8 @@ function normalizeTaskBelonging(value: string | undefined): string {
   return value?.trim() || defaultTaskBelonging
 }
 
-// 归属既可以从常用建议中选择，也允许录入服务端支持的自定义文本。保留任务
-// 列表中已有的自定义值，避免用户下次编辑时找不到此前使用过的归属。
+// 归属既可以从常用建议中选择，也允许录入服务端支持的自定义文本。历史任务
+// （含已删除任务）仍保留在服务列表内，因此也纳入建议，避免用户找不到历史归属。
 const taskBelongingSuggestions = computed(() => {
   const suggestions = new Set(taskBelongingOptions)
   const addSuggestion = (value: string | undefined) => {
@@ -380,10 +399,20 @@ const taskBelongingSuggestions = computed(() => {
     if (suggestion) suggestions.add(suggestion)
   }
 
-  store.activeTasks.forEach(item => addSuggestion(item.taskBelonging))
+  store.tasks.forEach(item => addSuggestion(item.taskBelonging))
   addSuggestion(task.value?.taskBelonging)
   return [...suggestions]
 })
+
+watch(
+  () => [task.value?.clientId, task.value?.taskBelonging] as const,
+  ([clientId, taskBelonging]) => {
+    // 保存期间保留用户正在提交的文字，不能让乐观更新或异步响应重置输入框。
+    if (taskBelongingSaving.value && taskBelongingSavingClientId.value === clientId) return
+    taskBelongingDraft.value = normalizeTaskBelonging(taskBelonging)
+  },
+  { immediate: true },
+)
 const categoryOptions = ['需求', 'bug', '研究']
 // P6-1: when the user is in a team, drive the owner dropdown from team
 // members; otherwise fall back to the legacy hardcoded list (desktop
@@ -449,18 +478,39 @@ async function updateField(field: string, value: any, clientId = task.value?.cli
   return true
 }
 
-async function saveTaskBelonging(event: Event) {
-  const input = event.target as HTMLInputElement
+function setTaskBelongingDraft(event: Event) {
+  taskBelongingDraft.value = (event.target as HTMLInputElement).value
+}
+
+async function selectTaskBelongingSuggestion(event: Event) {
+  const select = event.target as HTMLSelectElement
+  const taskBelonging = select.value
+  select.value = ''
+  if (!taskBelonging) return
+
+  taskBelongingDraft.value = taskBelonging
+  await saveTaskBelonging()
+}
+
+async function saveTaskBelonging(event?: Event) {
+  if (event?.target instanceof HTMLInputElement) {
+    taskBelongingDraft.value = event.target.value
+  }
+
   const clientId = task.value?.clientId
   if (!clientId) return
-  const taskBelonging = normalizeTaskBelonging(input.value)
+  const taskBelonging = normalizeTaskBelonging(taskBelongingDraft.value)
+  taskBelongingDraft.value = taskBelonging
+
+  // change 与 blur 都可能在同一次编辑后触发；值未变化时无需重复 PATCH。
+  if (taskBelonging === normalizeTaskBelonging(task.value?.taskBelonging)) return
 
   // 同一字段只允许一个在途请求。正常交互时输入框已禁用；这里仍保留最近
   // 一次变更，确保极短时间内的连续事件不会并发触发乐观更新和乱序回滚。
   if (taskBelongingSaving.value) {
     if (taskBelongingSavingClientId.value === clientId) {
       pendingTaskBelonging.value = taskBelonging
-      input.value = taskBelonging
+      taskBelongingDraft.value = taskBelonging
     }
     return
   }
@@ -479,11 +529,13 @@ async function saveTaskBelonging(event: Event) {
         continue
       }
 
-      // updateTask 在失败时会回滚任务对象；显式恢复输入框，避免未保存的文字
+      // updateTask 在失败时会回滚任务对象；显式恢复草稿，避免未保存的文字
       // 继续显示为已保存状态。成功时也回显归一化后的值。
-      input.value = saved
-        ? currentValue
-        : normalizeTaskBelonging(store.tasks.find(item => item.clientId === clientId)?.taskBelonging)
+      if (task.value?.clientId === clientId) {
+        taskBelongingDraft.value = saved
+          ? currentValue
+          : normalizeTaskBelonging(store.tasks.find(item => item.clientId === clientId)?.taskBelonging)
+      }
       return
     }
   } finally {
@@ -1135,6 +1187,25 @@ onBeforeUnmount(clearPreviews)
   box-shadow: 0 0 0 3px oklch(60% 0.12 240 / 0.12);
 }
 .detail-field textarea { min-height: 54px; }
+.task-belonging-editor {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+}
+.task-belonging-editor input { min-width: 0; }
+.task-belonging-save {
+  border: 1px solid oklch(56% 0.12 240);
+  border-radius: var(--radius-sm);
+  background: oklch(56% 0.12 240);
+  color: white;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  padding: 0 10px;
+  white-space: nowrap;
+}
+.task-belonging-save:disabled { opacity: 0.6; cursor: not-allowed; }
+.task-belonging-history { margin-top: 6px; }
 .content-actions { display: flex; gap: 5px; }
 .content-actions button { border: 1px solid var(--border-subtle); background: var(--surface); border-radius: var(--radius-sm); padding: 3px 7px; font-size: 11px; cursor: pointer; color: var(--text-secondary); }
 .content-actions button:hover { color: var(--text-primary); border-color: oklch(60% 0.12 240); }

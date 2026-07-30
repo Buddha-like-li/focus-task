@@ -110,12 +110,14 @@ describe('DetailPanel task belonging', () => {
       return true
     })
 
-    const suggestions = Array.from(mountPoint!.querySelectorAll<HTMLOptionElement>('#task-belonging-options option'))
+    const history = mountPoint!.querySelector<HTMLSelectElement>('[data-testid="task-belonging-history"]')!
+    const suggestions = Array.from(history.querySelectorAll<HTMLOptionElement>('option'))
       .map(option => option.value)
 
     expect(mountPoint!.querySelector('label[for="task-belonging-input"]')?.textContent).toContain('任务归属')
-    expect(input.getAttribute('list')).toBe('task-belonging-options')
+    expect(input.getAttribute('list')).toBeNull()
     expect(input.maxLength).toBe(100)
+    expect(history.value).toBe('')
     expect(suggestions).toContain('项目管理')
     expect(suggestions).toContain('客户专项')
     expect(suggestions).not.toContain('  客户专项  ')
@@ -127,6 +129,81 @@ describe('DetailPanel task belonging', () => {
       expect(taskStore.updateTask).toHaveBeenCalledWith('selected-task', { taskBelonging: '新建归属' })
     })
     expect(input.value).toBe('新建归属')
+  })
+
+  it('shows the selected task belonging and includes deleted-task history in the visible selector', async () => {
+    const { input } = await mountDetailPanel([
+      makeTask({ taskBelonging: '历史客户项目' }),
+      makeTask({
+        id: 2,
+        clientId: 'deleted-task',
+        taskBelonging: '已归档项目',
+        deleted: true,
+      }),
+    ])
+
+    const history = mountPoint!.querySelector<HTMLSelectElement>('[data-testid="task-belonging-history"]')!
+    const suggestions = Array.from(history.querySelectorAll<HTMLOptionElement>('option'))
+      .map(option => option.value)
+
+    expect(input.value).toBe('历史客户项目')
+    expect(suggestions).toContain('已归档项目')
+  })
+
+  it('saves a custom belonging when the user presses Enter', async () => {
+    const { taskStore, input } = await mountDetailPanel([makeTask()])
+    vi.spyOn(taskStore, 'updateTask').mockImplementation(async (_clientId, updates) => {
+      Object.assign(taskStore.tasks[0]!, updates)
+      return true
+    })
+
+    input.value = '回车新增归属'
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
+
+    await vi.waitFor(() => {
+      expect(taskStore.updateTask).toHaveBeenCalledWith('selected-task', { taskBelonging: '回车新增归属' })
+    })
+    expect(input.value).toBe('回车新增归属')
+  })
+
+  it('saves a custom belonging through the visible save action', async () => {
+    const { taskStore, input } = await mountDetailPanel([makeTask()])
+    vi.spyOn(taskStore, 'updateTask').mockImplementation(async (_clientId, updates) => {
+      Object.assign(taskStore.tasks[0]!, updates)
+      return true
+    })
+    const saveButton = mountPoint!.querySelector<HTMLButtonElement>('.task-belonging-save')!
+
+    input.value = '点击新增归属'
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    saveButton.click()
+
+    await vi.waitFor(() => {
+      expect(taskStore.updateTask).toHaveBeenCalledWith('selected-task', { taskBelonging: '点击新增归属' })
+    })
+    expect(input.value).toBe('点击新增归属')
+  })
+
+  it('uses a visible history selection without relying on datalist', async () => {
+    const { taskStore, input } = await mountDetailPanel([
+      makeTask(),
+      makeTask({ id: 2, clientId: 'history-task', taskBelonging: '客户专项' }),
+    ])
+    vi.spyOn(taskStore, 'updateTask').mockImplementation(async (_clientId, updates) => {
+      Object.assign(taskStore.tasks[0]!, updates)
+      return true
+    })
+    const history = mountPoint!.querySelector<HTMLSelectElement>('[data-testid="task-belonging-history"]')!
+
+    history.value = '客户专项'
+    history.dispatchEvent(new Event('change', { bubbles: true }))
+
+    await vi.waitFor(() => {
+      expect(taskStore.updateTask).toHaveBeenCalledWith('selected-task', { taskBelonging: '客户专项' })
+    })
+    expect(input.value).toBe('客户专项')
+    expect(history.value).toBe('')
   })
 
   it('saves the default belonging when the user clears the field', async () => {
