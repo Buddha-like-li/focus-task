@@ -5,6 +5,8 @@ use std::fs::{self, OpenOptions};
 use std::io::{ErrorKind, Write};
 #[cfg(target_os = "windows")]
 use std::os::windows::ffi::OsStrExt;
+#[cfg(target_os = "windows")]
+use std::os::windows::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Mutex, MutexGuard};
@@ -34,6 +36,8 @@ const MAX_AUTH_SESSION_PLAINTEXT_BYTES: usize = 512 * 1024;
 const AUTH_SESSION_MUTEX_NAME: &str = r"Local\FocusTaskAuthSessionV1";
 const AUTH_SESSION_MUTEX_TIMEOUT_MS: u32 = 10_000;
 const REPORT_EXPORT_DIRECTORY: [&str; 2] = ["Focus Task", "Reports"];
+#[cfg(target_os = "windows")]
+const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0400;
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 struct AuthState {
@@ -913,6 +917,69 @@ fn is_task_report_copy_filename(filename: &str, task_id: u64) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
 }
 
+#[cfg(target_os = "windows")]
+fn is_reparse_point(metadata: &fs::Metadata) -> bool {
+    metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+}
+
+#[cfg(not(target_os = "windows"))]
+fn is_reparse_point(_metadata: &fs::Metadata) -> bool {
+    false
+}
+
+/// Returns whether an existing controlled directory component is safe to use.
+/// A missing component is not created by a cleanup command and is treated as
+/// an empty result instead.
+fn validate_report_directory_component(path: &Path, name: &str) -> Result<bool, String> {
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(err) if err.kind() == ErrorKind::NotFound => return Ok(false),
+        Err(err) => return Err(format!("无法检查本机报告目录：{err}")),
+    };
+
+    if metadata.file_type().is_symlink() || is_reparse_point(&metadata) {
+        return Err(format!(
+            "本机报告目录包含符号链接或重解析点，已拒绝清理：{name}"
+        ));
+    }
+    if !metadata.file_type().is_dir() {
+        return Err(format!("本机报告目录不是目录，已拒绝清理：{name}"));
+    }
+    Ok(true)
+}
+
+/// Resolves the one directory a purge command may enumerate. `documents_dir`
+/// comes from Tauri rather than the caller, but the two child components may
+/// have been replaced by links, so both need a no-follow validation first.
+fn safe_report_export_directory_for_cleanup(
+    documents_dir: &Path,
+) -> Result<Option<PathBuf>, String> {
+    let canonical_documents = fs::canonicalize(documents_dir)
+        .map_err(|err| format!("无法定位 Windows 文档目录：{err}"))?;
+    let documents_metadata = fs::metadata(&canonical_documents)
+        .map_err(|err| format!("无法检查 Windows 文档目录：{err}"))?;
+    if !documents_metadata.is_dir() {
+        return Err("Windows 文档目录无效，已拒绝清理本机报告副本。".to_string());
+    }
+
+    let focus_task_directory = canonical_documents.join(REPORT_EXPORT_DIRECTORY[0]);
+    if !validate_report_directory_component(&focus_task_directory, REPORT_EXPORT_DIRECTORY[0])? {
+        return Ok(None);
+    }
+
+    let reports_directory = focus_task_directory.join(REPORT_EXPORT_DIRECTORY[1]);
+    if !validate_report_directory_component(&reports_directory, REPORT_EXPORT_DIRECTORY[1])? {
+        return Ok(None);
+    }
+
+    let canonical_reports = fs::canonicalize(&reports_directory)
+        .map_err(|err| format!("无法定位本机报告目录：{err}"))?;
+    if !canonical_reports.starts_with(&canonical_documents) {
+        return Err("本机报告目录不在 Windows 文档目录中，已拒绝清理。".to_string());
+    }
+    Ok(Some(canonical_reports))
+}
+
 /// Deletes only application-managed, single-task Markdown copies in the fixed
 /// Documents\\Focus Task\\Reports directory. No caller-provided paths and no
 /// recursive traversal are accepted here.
@@ -924,22 +991,23 @@ fn delete_task_report_copies_from_directory(
         return Err("任务编号无效，无法清理本机报告副本。".to_string());
     }
 
-    let directory = report_export_directory(documents_dir);
-    let entries = match fs::read_dir(&directory) {
-        Ok(entries) => entries,
-        Err(err) if err.kind() == ErrorKind::NotFound => return Ok(0),
-        Err(err) => return Err(format!("无法读取本机报告目录：{err}")),
+    let Some(directory) = safe_report_export_directory_for_cleanup(documents_dir)? else {
+        return Ok(0);
     };
+    let entries = fs::read_dir(&directory).map_err(|err| format!("无法读取本机报告目录：{err}"))?;
 
     let mut deleted = 0;
     for entry in entries {
         let entry = entry.map_err(|err| format!("无法读取本机报告文件：{err}"))?;
-        let file_type = entry
-            .file_type()
-            .map_err(|err| format!("无法检查本机报告文件：{err}"))?;
+        let path = entry.path();
+        let metadata =
+            fs::symlink_metadata(&path).map_err(|err| format!("无法检查本机报告文件：{err}"))?;
         // Do not follow symlinks or recurse into directories. The command only
         // deletes direct, ordinary Markdown files generated for this task.
-        if !file_type.is_file() || file_type.is_symlink() {
+        if !metadata.file_type().is_file()
+            || metadata.file_type().is_symlink()
+            || is_reparse_point(&metadata)
+        {
             continue;
         }
 
@@ -951,7 +1019,7 @@ fn delete_task_report_copies_from_directory(
             continue;
         }
 
-        fs::remove_file(entry.path()).map_err(|err| format!("无法删除本机报告副本：{err}"))?;
+        fs::remove_file(path).map_err(|err| format!("无法删除本机报告副本：{err}"))?;
         deleted += 1;
     }
     Ok(deleted)
@@ -1221,6 +1289,87 @@ mod report_export_tests {
         assert!(delete_task_report_copies_from_directory(&root, 0).is_err());
 
         fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[cfg(target_os = "windows")]
+    fn create_linked_directory_for_cleanup_test(target: &Path, link_path: &Path) {
+        match std::os::windows::fs::symlink_dir(target, link_path) {
+            Ok(()) => {}
+            // Many standard Windows user sessions do not have the symbolic-link
+            // privilege. A junction exercises the same reparse-point rejection
+            // without weakening the test or silently skipping it.
+            Err(error) if error.raw_os_error() == Some(1314) => {
+                let output = Command::new("cmd.exe")
+                    .args(["/C", "mklink", "/J"])
+                    .arg(link_path)
+                    .arg(target)
+                    .output()
+                    .expect("测试必须能创建目录重解析点");
+                assert!(
+                    output.status.success(),
+                    "测试无法创建目录重解析点：{}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+            }
+            Err(error) => panic!("测试必须能创建目录符号链接：{error}"),
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    fn assert_linked_report_directory_is_rejected(link_focus_task_directory: bool) {
+        let suffix = if link_focus_task_directory {
+            "focus-task-link"
+        } else {
+            "reports-link"
+        };
+        let root = std::env::temp_dir().join(format!(
+            "focus-task-report-purge-{suffix}-{}",
+            std::process::id()
+        ));
+        let external = std::env::temp_dir().join(format!(
+            "focus-task-report-purge-external-{suffix}-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        let _ = fs::remove_dir_all(&external);
+        fs::create_dir_all(&root).unwrap();
+
+        let (link_path, external_report_directory) = if link_focus_task_directory {
+            let reports = external.join(REPORT_EXPORT_DIRECTORY[1]);
+            fs::create_dir_all(&reports).unwrap();
+            (root.join(REPORT_EXPORT_DIRECTORY[0]), reports)
+        } else {
+            let focus_task_directory = root.join(REPORT_EXPORT_DIRECTORY[0]);
+            fs::create_dir_all(&focus_task_directory).unwrap();
+            fs::create_dir_all(&external).unwrap();
+            (
+                focus_task_directory.join(REPORT_EXPORT_DIRECTORY[1]),
+                external.clone(),
+            )
+        };
+        let external_copy = external_report_directory.join("task-42-snapshot.md");
+        fs::write(&external_copy, "# 不得删除").unwrap();
+        create_linked_directory_for_cleanup_test(&external, &link_path);
+
+        let error = delete_task_report_copies_from_directory(&root, 42).unwrap_err();
+        assert!(error.contains("符号链接或重解析点"));
+        assert!(external_copy.is_file());
+
+        fs::remove_dir(&link_path).unwrap();
+        fs::remove_dir_all(&root).unwrap();
+        fs::remove_dir_all(&external).unwrap();
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn deleting_task_report_copies_rejects_a_linked_focus_task_directory() {
+        assert_linked_report_directory_is_rejected(true);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn deleting_task_report_copies_rejects_a_linked_reports_directory() {
+        assert_linked_report_directory_is_rejected(false);
     }
 }
 

@@ -64,6 +64,9 @@ export const useTaskStore = defineStore('tasks', () => {
   // A logout invalidates all requests started by the prior account. This is
   // deliberately separate from request ordering within one account.
   let sessionRevision = 0
+  // A successful local mutation must also invalidate an earlier list request
+  // from the same account, otherwise its stale response can resurrect a task.
+  let listRevision = 0
 
   function normalizeTask(task: Task): Task {
     return {
@@ -99,7 +102,8 @@ export const useTaskStore = defineStore('tasks', () => {
     return flattened
   }
 
-  function replaceServerTasks(serverTasks: Task[]) {
+  function replaceServerTasks(serverTasks: Task[], invalidatePendingList = true) {
+    if (invalidatePendingList) listRevision += 1
     tasks.value = flattenTasks(serverTasks).map(normalizeTask)
     if (selectedTaskId.value && !tasks.value.some(task => task.clientId === selectedTaskId.value && !task.deleted)) {
       selectedTaskId.value = null
@@ -108,6 +112,7 @@ export const useTaskStore = defineStore('tasks', () => {
 
   /** 写入或刷新服务端工作流返回的单个任务。 */
   function upsertServerTask(serverTask: Task): Task {
+    listRevision += 1
     const normalized = normalizeTask(serverTask)
     const index = tasks.value.findIndex(task => task.clientId === normalized.clientId)
     if (index === -1) tasks.value.unshift(normalized)
@@ -119,6 +124,7 @@ export const useTaskStore = defineStore('tasks', () => {
   /** Remove account-specific task data before another user signs in. */
   function clearSessionState() {
     sessionRevision += 1
+    listRevision += 1
     tasks.value = []
     selectedTaskId.value = null
     searchQuery.value = ''
@@ -130,6 +136,11 @@ export const useTaskStore = defineStore('tasks', () => {
 
   function isCurrentSession(requestRevision: number): boolean {
     return requestRevision === sessionRevision
+  }
+
+  function invalidatePendingList() {
+    listRevision += 1
+    loading.value = false
   }
 
   const activeTasks = computed(() => tasks.value.filter(task => !task.deleted))
@@ -155,19 +166,20 @@ export const useTaskStore = defineStore('tasks', () => {
 
   async function fetchTasks() {
     const requestRevision = sessionRevision
+    const requestListRevision = ++listRevision
     loading.value = true
     serviceError.value = ''
     try {
       const serverTasks = await api.listTasks(true)
-      if (requestRevision !== sessionRevision) return
-      replaceServerTasks(serverTasks)
+      if (requestRevision !== sessionRevision || requestListRevision !== listRevision) return
+      replaceServerTasks(serverTasks, false)
     } catch (error) {
-      if (requestRevision !== sessionRevision) return
+      if (requestRevision !== sessionRevision || requestListRevision !== listRevision) return
       serviceError.value = error instanceof Error ? error.message : '无法连接 Focus Task 服务'
       appLogger.warn('[tasks] fetchTasks failed', error)
       throw error
     } finally {
-      if (requestRevision === sessionRevision) loading.value = false
+      if (requestRevision === sessionRevision && requestListRevision === listRevision) loading.value = false
     }
   }
 
@@ -279,12 +291,16 @@ export const useTaskStore = defineStore('tasks', () => {
     const task = tasks.value.find(item => item.clientId === clientId)
     if (!task?.id) return false
     try {
+      const trashStore = useTrashStore()
+      await trashStore.ensureTrashSupported()
+      if (!isCurrentSession(requestRevision)) return false
       await api.moveTaskToTrash(task.id)
       if (!isCurrentSession(requestRevision)) return false
+      invalidatePendingList()
       const movedTaskIds = taskTreeClientIds(clientId)
       tasks.value = tasks.value.filter(item => !movedTaskIds.has(item.clientId))
       if (selectedTaskId.value && movedTaskIds.has(selectedTaskId.value)) selectedTaskId.value = null
-      useTrashStore().recordMovedTask(task)
+      trashStore.recordMovedTask(task)
       serviceError.value = ''
       return true
     } catch (error) {
@@ -302,6 +318,7 @@ export const useTaskStore = defineStore('tasks', () => {
 
   /** 在服务端永久删除成功后清除当前账号内存中的旧任务副本。 */
   function forgetTask(task: Pick<Task, 'id' | 'clientId'>) {
+    invalidatePendingList()
     const removedTaskIds = taskTreeClientIds(task.clientId)
     tasks.value = tasks.value.filter((item) => item.id !== task.id && !removedTaskIds.has(item.clientId))
     if (selectedTaskId.value && removedTaskIds.has(selectedTaskId.value)) selectedTaskId.value = null

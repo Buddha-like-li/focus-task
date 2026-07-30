@@ -5,6 +5,7 @@ import type { Task } from '@/stores/taskStore'
 import { appLogger } from '@/composables/useAppLogger'
 
 type TrashAction = 'load' | 'restore' | 'permanentDelete'
+const TRASH_UNSUPPORTED_MESSAGE = '本机服务版本不支持垃圾桶，请先更新服务镜像。'
 
 export interface PermanentDeleteOutcome {
   cleanupPending: boolean
@@ -34,6 +35,12 @@ function formatTrashError(error: unknown, action: TrashAction): string {
   return '无法加载垃圾桶，请确认本地服务正常后重试。'
 }
 
+function isUnsupportedTrashEndpoint(error: unknown): boolean {
+  return typeof api.ApiRequestError === 'function'
+    && error instanceof api.ApiRequestError
+    && (error.status === 404 || error.status === 422)
+}
+
 export const useTrashStore = defineStore('trash', () => {
   const tasks = ref<Task[]>([])
   const loading = ref(false)
@@ -41,6 +48,8 @@ export const useTrashStore = defineStore('trash', () => {
   const pendingTaskIds = ref<Set<number>>(new Set())
   let sessionRevision = 0
   let listRevision = 0
+  let trashSupported = false
+  let trashSupportCheck: Promise<void> | null = null
 
   const count = computed(() => tasks.value.length)
 
@@ -63,10 +72,40 @@ export const useTrashStore = defineStore('trash', () => {
   function clearSessionState() {
     sessionRevision += 1
     listRevision += 1
+    trashSupported = false
+    trashSupportCheck = null
     tasks.value = []
     loading.value = false
     error.value = ''
     pendingTaskIds.value = new Set()
+  }
+
+  /**
+   * Old local service images accepted DELETE /tasks/{id}, but did not expose a
+   * trash endpoint. Verify the recovery path before issuing an irreversible-to-
+   * the-user delete, and keep the successful result only for this account session.
+   */
+  async function ensureTrashSupported(): Promise<void> {
+    if (trashSupported) return
+    if (trashSupportCheck) return trashSupportCheck
+
+    const requestRevision = sessionRevision
+    let check: Promise<void>
+    check = Promise.resolve()
+      .then(() => api.listTrashTasks())
+      .then(() => {
+        if (isCurrentSession(requestRevision)) trashSupported = true
+      })
+      .catch((caught: unknown) => {
+        if (!isCurrentSession(requestRevision)) return
+        if (isUnsupportedTrashEndpoint(caught)) throw new Error(TRASH_UNSUPPORTED_MESSAGE)
+        throw caught
+      })
+      .finally(() => {
+        if (trashSupportCheck === check) trashSupportCheck = null
+      })
+    trashSupportCheck = check
+    return check
   }
 
   /** 垃圾桶始终从服务端单独加载，绝不复用工作台的历史任务缓存。 */
@@ -79,6 +118,7 @@ export const useTrashStore = defineStore('trash', () => {
       const serverTasks = await api.listTrashTasks()
       if (!isCurrentSession(requestRevision) || requestListRevision !== listRevision) return
       // 服务端契约只返回已删除任务；客户端仍做防御性过滤，避免活动任务误入垃圾桶。
+      trashSupported = true
       tasks.value = serverTasks.filter((task) => task.deleted)
     } catch (caught) {
       if (!isCurrentSession(requestRevision) || requestListRevision !== listRevision) return
@@ -158,6 +198,7 @@ export const useTrashStore = defineStore('trash', () => {
     error,
     count,
     clearSessionState,
+    ensureTrashSupported,
     fetchTrash,
     recordMovedTask,
     restoreTask,

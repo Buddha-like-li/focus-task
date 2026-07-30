@@ -143,6 +143,19 @@ function subtaskCount(task: Task): number {
   return Math.max(task.childCount || 0, nestedCount)
 }
 
+function taskTreeIds(task: Task): number[] {
+  const ids = new Set<number>()
+  const visitedClientIds = new Set<string>()
+  const visit = (current: Task) => {
+    if (visitedClientIds.has(current.clientId)) return
+    visitedClientIds.add(current.clientId)
+    if (Number.isSafeInteger(current.id) && current.id! > 0) ids.add(current.id!)
+    for (const child of current.subtasks || []) visit(child)
+  }
+  visit(task)
+  return [...ids]
+}
+
 async function reload() {
   restoreNotice.value = ''
   await trash.fetchTrash().catch(() => undefined)
@@ -181,16 +194,20 @@ async function confirmPermanentDelete() {
   if (!outcome) return
   // taskStore 保留软删除数据作历史归属建议；永久删除后不能让该缓存继续保留。
   taskStore.forgetTask(task)
-  if (outcome.cleanupPending) {
-    restoreNotice.value = '服务记录已删除，文件清理待处理。'
-  }
-  try {
-    await deleteTaskReportCopies(task.id!)
-  } catch {
+  const localCopyResults = await Promise.allSettled(
+    taskTreeIds(task).map((taskId) => deleteTaskReportCopies(taskId)),
+  )
+  const failedCopyCleanupCount = localCopyResults.filter((result) => result.status === 'rejected').length
+  if (outcome.cleanupPending || failedCopyCleanupCount > 0) {
+    const notices: string[] = []
+    if (outcome.cleanupPending) notices.push('服务记录已删除，文件清理待处理。')
+    if (failedCopyCleanupCount > 0) {
+      notices.push(outcome.cleanupPending
+        ? `本机报告副本清理失败，涉及 ${failedCopyCleanupCount} 项任务。`
+        : `服务数据已删除，但本机报告副本清理失败，涉及 ${failedCopyCleanupCount} 项任务。`)
+    }
     // 服务端已完成彻底删除，不能因本机副本清理失败而伪造失败或尝试回滚服务数据。
-    restoreNotice.value = outcome.cleanupPending
-      ? '服务记录已删除，文件清理待处理；本机报告副本清理失败。'
-      : '服务数据已删除，但本机报告副本清理失败。'
+    restoreNotice.value = notices.join('')
   }
   closePermanentDeleteConfirmation()
 }

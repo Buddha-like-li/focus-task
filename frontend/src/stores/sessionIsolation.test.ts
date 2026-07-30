@@ -8,6 +8,7 @@ const apiMocks = vi.hoisted(() => ({
   createTask: vi.fn(),
   updateTask: vi.fn(),
   moveTaskToTrash: vi.fn(),
+  listTrashTasks: vi.fn(),
   reorderTasks: vi.fn(),
   listRequirements: vi.fn(),
   getTeam: vi.fn(),
@@ -104,6 +105,7 @@ describe('账号切换期间的请求隔离', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     vi.clearAllMocks()
+    apiMocks.listTrashTasks.mockResolvedValue([])
   })
 
   it('账号 A 的旧任务响应不会覆盖账号 B 的任务', async () => {
@@ -183,6 +185,7 @@ describe('账号切换期间的请求隔离', () => {
     apiMocks.moveTaskToTrash.mockReturnValueOnce(deleteA.promise)
     store.replaceServerTasks([task('shared', '账号 A 待删任务')])
     const deleting = store.moveTaskToTrash('shared')
+    await vi.waitFor(() => expect(apiMocks.moveTaskToTrash).toHaveBeenCalledWith(1))
     store.clearSessionState()
     store.replaceServerTasks([task('shared', '账号 B 保留任务')])
     deleteA.resolve()

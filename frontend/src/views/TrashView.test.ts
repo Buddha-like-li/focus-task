@@ -167,6 +167,56 @@ describe('垃圾桶页面', () => {
     })
   })
 
+  it('永久删除父任务时清理所有子任务的本机任务报告副本', async () => {
+    apiMocks.permanentlyDeleteTask.mockResolvedValue({
+      ok: true,
+      permanentlyDeleted: true,
+      cleanupPending: false,
+    })
+    apiMocks.listTrashTasks.mockResolvedValue([task({
+      subtasks: [
+        task({ id: 43, clientId: 'child-task', title: '子任务', subtasks: [
+          task({ id: 44, clientId: 'grandchild-task', title: '孙任务' }),
+        ] }),
+      ],
+    })])
+    await mountView()
+
+    buttonByText(mountPoint!, '彻底删除')?.click()
+    await vi.waitFor(() => expect(mountPoint?.textContent).toContain('此操作无法恢复'))
+    const confirmations = Array.from(mountPoint!.querySelectorAll<HTMLButtonElement>('button'))
+      .filter((button) => button.textContent?.trim() === '彻底删除')
+    confirmations[confirmations.length - 1]?.click()
+
+    await vi.waitFor(() => {
+      expect(deleteTaskReportCopies).toHaveBeenCalledTimes(3)
+      expect(deleteTaskReportCopies).toHaveBeenCalledWith(42)
+      expect(deleteTaskReportCopies).toHaveBeenCalledWith(43)
+      expect(deleteTaskReportCopies).toHaveBeenCalledWith(44)
+    })
+  })
+
+  it('任何本机副本清理失败都会明确提示，但不撤销已完成的服务端删除', async () => {
+    apiMocks.permanentlyDeleteTask.mockResolvedValue({
+      ok: true,
+      permanentlyDeleted: true,
+      cleanupPending: false,
+    })
+    vi.mocked(deleteTaskReportCopies).mockRejectedValueOnce(new Error('locked'))
+    await mountView()
+
+    buttonByText(mountPoint!, '彻底删除')?.click()
+    await vi.waitFor(() => expect(mountPoint?.textContent).toContain('此操作无法恢复'))
+    const confirmations = Array.from(mountPoint!.querySelectorAll<HTMLButtonElement>('button'))
+      .filter((button) => button.textContent?.trim() === '彻底删除')
+    confirmations[confirmations.length - 1]?.click()
+
+    await vi.waitFor(() => {
+      expect(mountPoint?.textContent).toContain('服务数据已删除，但本机报告副本清理失败，涉及 1 项任务。')
+      expect(mountPoint?.textContent).toContain('垃圾桶为空')
+    })
+  })
+
   it('服务记录删除但服务端文件清理待处理时显示明确警告', async () => {
     apiMocks.permanentlyDeleteTask.mockResolvedValue({
       ok: true,

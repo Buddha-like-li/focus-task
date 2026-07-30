@@ -85,6 +85,26 @@ describe('垃圾桶任务状态', () => {
     expect(store.count).toBe(1)
   })
 
+  it('首次移入垃圾桶前验证服务能力，成功结果仅缓存到当前会话', async () => {
+    apiMocks.listTrashTasks.mockResolvedValue([])
+    const store = useTrashStore()
+
+    await store.ensureTrashSupported()
+    await store.ensureTrashSupported()
+    expect(apiMocks.listTrashTasks).toHaveBeenCalledTimes(1)
+
+    store.clearSessionState()
+    await store.ensureTrashSupported()
+    expect(apiMocks.listTrashTasks).toHaveBeenCalledTimes(2)
+  })
+
+  it('旧服务返回 422 时明确说明垃圾桶不可用', async () => {
+    apiMocks.listTrashTasks.mockRejectedValue(new apiMocks.ApiRequestError('invalid task id', 422))
+    const store = useTrashStore()
+
+    await expect(store.ensureTrashSupported()).rejects.toThrow('本机服务版本不支持垃圾桶，请先更新服务镜像。')
+  })
+
   it('恢复成功后立即从垃圾桶移除，失败时保留任务并显示中文冲突提示', async () => {
     const store = useTrashStore()
     store.tasks = [task()]
