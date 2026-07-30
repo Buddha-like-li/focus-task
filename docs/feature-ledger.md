@@ -25,6 +25,12 @@
 | 中文发布与更新说明 | GitHub Release 标题、正文、更新清单和桌面端更新弹窗共用同一份中文说明；发布前会拒绝空白或含英文的用户说明。 | `docs/release-notes/`、`scripts/validate-release-notes.sh`、`.github/workflows/release.yml`、`frontend/src/composables/useAppUpdate.ts`、`frontend/src/views/SettingsView.vue`、`frontend/src/views/AppLayout.vue` | `v2.3.6` tag 已推送，签名 CI 待完成 |
 | 服务不可用反馈 | 本机服务不可达时显示明确连接信息；恢复服务后可重新加载。 | `frontend/src/api/base.ts`、`frontend/src/views/AppLayout.vue`、`frontend/src/views/AppLayout.test.ts` | 当前源码包含 |
 
+## 待集成客户端功能
+
+| 功能 | 当前状态 | 约束与证据 |
+|---|---|---|
+| 垃圾桶与彻底删除 | 实现提交 `0631ece` 位于分支 `codex/trash-client-ui`，待独立审核、服务端联调和集成人合入。普通删除将显示为“移入垃圾桶”；垃圾桶可恢复，彻底删除使用中文二次确认；服务端返回 `cleanup_pending` 时只提示“服务记录已删除，文件清理待处理”，不误报全部完成。 | `docs/task-records/2026-07-30-codex-trash-client-ui.md`；本机报告副本仅限 `Documents\Focus Task\Reports` 中严格匹配任务 ID 的应用托管 Markdown 文件，不能按标题或任意路径删除。 |
+
 ## 客户端/服务边界
 
 - 客户端不内嵌、启动、停止、配置或重启后端进程。
