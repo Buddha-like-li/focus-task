@@ -1,16 +1,38 @@
-use keyring::Entry;
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
+use std::ffi::OsString;
 use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::io::{ErrorKind, Write};
+#[cfg(target_os = "windows")]
+use std::os::windows::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::{Mutex, MutexGuard};
 use tauri::Manager;
 use tauri_plugin_notification::NotificationExt;
+#[cfg(target_os = "windows")]
+use windows_sys::Win32::{
+    Foundation::{
+        CloseHandle, LocalFree, HANDLE, HLOCAL, WAIT_ABANDONED, WAIT_OBJECT_0, WAIT_TIMEOUT,
+    },
+    Security::Cryptography::{
+        CryptProtectData, CryptUnprotectData, CRYPTPROTECT_UI_FORBIDDEN, CRYPT_INTEGER_BLOB,
+    },
+    Storage::FileSystem::{MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH},
+    System::Threading::{CreateMutexW, ReleaseMutex, WaitForSingleObject},
+};
 
-const SERVICE_NAME: &str = "FocusTask";
-const AUTH_STATE_ACCOUNT: &str = "auth_state";
-const LEGACY_TOKEN_ACCOUNT: &str = "auth_token";
-const LEGACY_USERNAME_ACCOUNT: &str = "auth_username";
+const AUTH_SESSION_FILE: &str = "auth-sessions-v1.dpapi";
+const AUTH_SESSION_MAGIC: &[u8] = b"FocusTaskAuth\0";
+const AUTH_SESSION_FILE_VERSION: u8 = 1;
+const AUTH_SESSION_STORE_VERSION: u8 = 1;
+const MAX_AUTH_ACCOUNTS: usize = 8;
+const MAX_AUTH_USERNAME_CHARS: usize = 128;
+const MAX_AUTH_TOKEN_BYTES: usize = 48 * 1024;
+const MAX_AUTH_SESSION_FILE_BYTES: usize = 1024 * 1024;
+const MAX_AUTH_SESSION_PLAINTEXT_BYTES: usize = 512 * 1024;
+const AUTH_SESSION_MUTEX_NAME: &str = r"Local\FocusTaskAuthSessionV1";
+const AUTH_SESSION_MUTEX_TIMEOUT_MS: u32 = 10_000;
 const REPORT_EXPORT_DIRECTORY: [&str; 2] = ["Focus Task", "Reports"];
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
@@ -20,13 +42,125 @@ struct AuthState {
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
-struct StoredAuthState {
-    token: String,
+struct AuthAccountRecord {
     username: String,
-    // Older installations stored AuthState directly and therefore have no
-    // marker. Missing means committed so those sessions remain readable.
     #[serde(default)]
-    pending: bool,
+    token: Option<String>,
+    #[serde(default)]
+    last_used: u64,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+struct AuthSessionStore {
+    version: u8,
+    #[serde(default)]
+    active_username: Option<String>,
+    #[serde(default)]
+    accounts: Vec<AuthAccountRecord>,
+}
+
+#[derive(Serialize, Clone, Debug, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+struct AuthAccountSummary {
+    username: String,
+    has_session: bool,
+    is_active: bool,
+}
+
+impl AuthSessionStore {
+    fn empty() -> Self {
+        Self {
+            version: AUTH_SESSION_STORE_VERSION,
+            active_username: None,
+            accounts: Vec::new(),
+        }
+    }
+}
+
+struct AuthSessionLock(Mutex<()>);
+
+struct AuthSessionGuard<'a> {
+    _in_process: MutexGuard<'a, ()>,
+    _cross_process: CrossProcessAuthSessionLock,
+}
+
+#[cfg(target_os = "windows")]
+struct CrossProcessAuthSessionLock {
+    handle: HANDLE,
+    acquired: bool,
+}
+
+#[cfg(target_os = "windows")]
+impl CrossProcessAuthSessionLock {
+    fn acquire() -> Result<Self, String> {
+        let name = AUTH_SESSION_MUTEX_NAME
+            .encode_utf16()
+            .chain(std::iter::once(0))
+            .collect::<Vec<_>>();
+        let handle = unsafe { CreateMutexW(std::ptr::null(), 0, name.as_ptr()) };
+        if handle.is_null() {
+            return Err(format!(
+                "无法锁定本机登录状态：{}",
+                std::io::Error::last_os_error()
+            ));
+        }
+
+        match unsafe { WaitForSingleObject(handle, AUTH_SESSION_MUTEX_TIMEOUT_MS) } {
+            WAIT_OBJECT_0 | WAIT_ABANDONED => Ok(Self {
+                handle,
+                acquired: true,
+            }),
+            WAIT_TIMEOUT => {
+                unsafe {
+                    CloseHandle(handle);
+                }
+                Err("登录状态正在被另一实例处理，请稍后重试。".to_string())
+            }
+            _ => {
+                let error = std::io::Error::last_os_error();
+                unsafe {
+                    CloseHandle(handle);
+                }
+                Err(format!("无法锁定本机登录状态：{error}"))
+            }
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+impl Drop for CrossProcessAuthSessionLock {
+    fn drop(&mut self) {
+        unsafe {
+            if self.acquired {
+                ReleaseMutex(self.handle);
+            }
+            CloseHandle(self.handle);
+        }
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+struct CrossProcessAuthSessionLock;
+
+#[cfg(not(target_os = "windows"))]
+impl CrossProcessAuthSessionLock {
+    fn acquire() -> Result<Self, String> {
+        Ok(Self)
+    }
+}
+
+fn lock_auth_session<'a>(
+    session_lock: &'a AuthSessionLock,
+) -> Result<AuthSessionGuard<'a>, String> {
+    let in_process = session_lock
+        .0
+        .lock()
+        .map_err(|_| "登录状态正在处理，请稍后重试。".to_string())?;
+    let cross_process = CrossProcessAuthSessionLock::acquire()?;
+    Ok(AuthSessionGuard {
+        _in_process: in_process,
+        _cross_process: cross_process,
+    })
 }
 
 #[derive(Serialize, Deserialize)]
@@ -35,224 +169,577 @@ struct NativeNotificationPayload {
     body: String,
 }
 
-fn keyring_entry(account: &str) -> Result<Entry, String> {
-    Entry::new(SERVICE_NAME, account).map_err(|err| err.to_string())
+fn normalize_username(username: &str) -> Result<String, String> {
+    let normalized = username.trim();
+    if normalized.is_empty()
+        || normalized.chars().count() > MAX_AUTH_USERNAME_CHARS
+        || normalized.chars().any(char::is_control)
+    {
+        return Err("用户名格式无效".to_string());
+    }
+    Ok(normalized.to_string())
 }
 
-fn read_credential(account: &str) -> Result<Option<String>, String> {
-    match keyring_entry(account)?.get_password() {
-        Ok(value) => Ok(Some(value)),
-        Err(keyring::Error::NoEntry) => Ok(None),
-        Err(err) => Err(err.to_string()),
-    }
+fn username_key(username: &str) -> String {
+    username.trim().to_string()
 }
 
-fn deserialize_stored_auth_state(serialized: &str) -> Result<StoredAuthState, String> {
-    let state: StoredAuthState = serde_json::from_str(serialized)
-        .map_err(|_| "Windows Credential Manager 中的登录状态格式无效".to_string())?;
-    if state.token.trim().is_empty() {
-        return Err("Windows Credential Manager 中的登录令牌为空".to_string());
+fn validate_auth_token(token: &str) -> Result<(), String> {
+    if token.trim().is_empty() {
+        return Err("拒绝保存空登录令牌".to_string());
     }
+    if token.len() > MAX_AUTH_TOKEN_BYTES || token.chars().any(char::is_control) {
+        return Err("登录令牌格式无效或过大".to_string());
+    }
+    Ok(())
+}
+
+fn normalize_auth_state(state: &AuthState) -> Result<AuthState, String> {
+    validate_auth_token(&state.token)?;
+    Ok(AuthState {
+        token: state.token.clone(),
+        username: normalize_username(&state.username)?,
+    })
+}
+
+fn normalize_auth_session_store(store: AuthSessionStore) -> Result<AuthSessionStore, String> {
+    if store.version != AUTH_SESSION_STORE_VERSION {
+        return Err("已保存登录状态版本不受支持".to_string());
+    }
+    if store.accounts.len() > MAX_AUTH_ACCOUNTS {
+        return Err("已保存登录状态包含过多账户".to_string());
+    }
+
+    let mut usernames = HashSet::new();
+    for account in &store.accounts {
+        let normalized = normalize_username(&account.username)?;
+        if normalized != account.username {
+            return Err("已保存登录状态中的用户名格式无效".to_string());
+        }
+        if let Some(token) = account.token.as_deref() {
+            validate_auth_token(token).map_err(|_| "已保存登录状态中的会话令牌无效".to_string())?;
+        }
+        if !usernames.insert(username_key(&account.username)) {
+            return Err("已保存登录状态包含重复账户".to_string());
+        }
+    }
+
+    let mut accounts = store.accounts;
+    accounts.sort_by(|left, right| {
+        right
+            .last_used
+            .cmp(&left.last_used)
+            .then_with(|| username_key(&left.username).cmp(&username_key(&right.username)))
+    });
+    let active_username = match store.active_username {
+        Some(active) => {
+            let normalized = normalize_username(&active)?;
+            if normalized != active {
+                return Err("已保存登录状态中的当前账户格式无效".to_string());
+            }
+            let active_key = username_key(&active);
+            let account = accounts
+                .iter()
+                .find(|account| username_key(&account.username) == active_key)
+                .ok_or_else(|| "已保存登录状态中的当前账户不存在".to_string())?;
+            if account.token.is_none() {
+                return Err("已保存登录状态中的当前账户没有有效会话".to_string());
+            }
+            Some(account.username.clone())
+        }
+        None => None,
+    };
+
+    Ok(AuthSessionStore {
+        version: AUTH_SESSION_STORE_VERSION,
+        active_username,
+        accounts,
+    })
+}
+
+fn next_last_used(store: &AuthSessionStore) -> u64 {
+    store
+        .accounts
+        .iter()
+        .map(|account| account.last_used)
+        .max()
+        .unwrap_or(0)
+        .saturating_add(1)
+}
+
+fn upsert_auth_session(
+    store: &mut AuthSessionStore,
+    state: &AuthState,
+) -> Result<AuthState, String> {
+    let state = normalize_auth_state(state)?;
+    let key = username_key(&state.username);
+    let last_used = next_last_used(store);
+    if let Some(account) = store
+        .accounts
+        .iter_mut()
+        .find(|account| username_key(&account.username) == key)
+    {
+        account.username = state.username.clone();
+        account.token = Some(state.token.clone());
+        account.last_used = last_used;
+    } else {
+        if store.accounts.len() >= MAX_AUTH_ACCOUNTS {
+            let oldest = store
+                .accounts
+                .iter()
+                .enumerate()
+                .min_by(|(_, left), (_, right)| {
+                    left.last_used.cmp(&right.last_used).then_with(|| {
+                        username_key(&left.username).cmp(&username_key(&right.username))
+                    })
+                })
+                .map(|(index, _)| index)
+                .ok_or_else(|| "无法整理已保存账户".to_string())?;
+            store.accounts.remove(oldest);
+        }
+        store.accounts.push(AuthAccountRecord {
+            username: state.username.clone(),
+            token: Some(state.token.clone()),
+            last_used,
+        });
+    }
+    store.active_username = Some(state.username.clone());
+    *store = normalize_auth_session_store(store.clone())?;
     Ok(state)
 }
 
-fn serialize_stored_auth_state(state: &AuthState, pending: bool) -> Result<String, String> {
-    serde_json::to_string(&StoredAuthState {
-        token: state.token.clone(),
-        username: state.username.clone(),
-        pending,
-    })
-    .map_err(|_| "无法序列化登录状态".to_string())
-}
-
-fn deserialize_auth_state(serialized: &str) -> Result<AuthState, String> {
-    let state = deserialize_stored_auth_state(serialized)?;
-    if state.pending {
-        return Err("Windows Credential Manager 中的登录状态尚未确认，请重新登录".to_string());
+fn active_auth_state(store: &AuthSessionStore) -> Option<AuthState> {
+    let active_key = username_key(store.active_username.as_deref()?);
+    let account = store
+        .accounts
+        .iter()
+        .find(|account| username_key(&account.username) == active_key)?;
+    let token = account.token.as_ref()?.trim();
+    if token.is_empty() {
+        return None;
     }
-    Ok(AuthState {
-        token: state.token,
-        username: state.username,
+    Some(AuthState {
+        token: token.to_string(),
+        username: account.username.clone(),
     })
 }
 
-fn verify_pending_auth_state(serialized: &str, expected: &AuthState) -> Result<(), String> {
-    let saved = deserialize_stored_auth_state(serialized)?;
-    if saved.pending && saved.token == expected.token && saved.username == expected.username {
-        Ok(())
-    } else {
-        Err("Windows Credential Manager 未保留完整待确认登录状态".to_string())
+fn clear_auth_session(store: &mut AuthSessionStore, username: Option<&str>) -> Result<(), String> {
+    let target = match username {
+        Some(username) => Some(normalize_username(username)?),
+        None => store.active_username.clone(),
+    };
+    let Some(target) = target else {
+        store.active_username = None;
+        return Ok(());
+    };
+    let target_key = username_key(&target);
+    if let Some(account) = store
+        .accounts
+        .iter_mut()
+        .find(|account| username_key(&account.username) == target_key)
+    {
+        account.token = None;
     }
+    if store
+        .active_username
+        .as_deref()
+        .is_some_and(|active| username_key(active) == target_key)
+    {
+        store.active_username = None;
+    }
+    Ok(())
 }
 
-fn clear_accounts<F>(accounts: &[&str], mut delete: F) -> Result<(), String>
-where
-    F: FnMut(&str) -> Result<(), String>,
-{
-    let mut failures = Vec::new();
-    for account in accounts {
-        if let Err(err) = delete(account) {
-            failures.push(format!("{account}: {err}"));
+fn restore_saved_auth_account(
+    store: &mut AuthSessionStore,
+    username: &str,
+) -> Result<Option<AuthState>, String> {
+    let username = normalize_username(username)?;
+    let key = username_key(&username);
+    let last_used = next_last_used(store);
+    let Some(account) = store
+        .accounts
+        .iter_mut()
+        .find(|account| username_key(&account.username) == key)
+    else {
+        return Ok(None);
+    };
+
+    account.last_used = last_used;
+    let Some(token) = account
+        .token
+        .as_ref()
+        .filter(|token| !token.trim().is_empty())
+    else {
+        store.active_username = None;
+        return Ok(None);
+    };
+    let state = AuthState {
+        token: token.clone(),
+        username: account.username.clone(),
+    };
+    store.active_username = Some(state.username.clone());
+    *store = normalize_auth_session_store(store.clone())?;
+    Ok(Some(state))
+}
+
+fn remove_auth_account_record(store: &mut AuthSessionStore, username: &str) -> Result<(), String> {
+    let username = normalize_username(username)?;
+    let key = username_key(&username);
+    store
+        .accounts
+        .retain(|account| username_key(&account.username) != key);
+    if store
+        .active_username
+        .as_deref()
+        .is_some_and(|active| username_key(active) == key)
+    {
+        store.active_username = None;
+    }
+    Ok(())
+}
+
+fn auth_account_summaries(store: &AuthSessionStore) -> Vec<AuthAccountSummary> {
+    store
+        .accounts
+        .iter()
+        .map(|account| AuthAccountSummary {
+            username: account.username.clone(),
+            has_session: account
+                .token
+                .as_ref()
+                .is_some_and(|token| !token.trim().is_empty()),
+            is_active: store
+                .active_username
+                .as_deref()
+                .is_some_and(|active| username_key(active) == username_key(&account.username)),
+        })
+        .collect()
+}
+
+#[cfg(target_os = "windows")]
+fn copy_and_free_dpapi_blob(blob: CRYPT_INTEGER_BLOB) -> Result<Vec<u8>, String> {
+    let value = if blob.cbData == 0 {
+        Vec::new()
+    } else if blob.pbData.is_null() {
+        return Err("Windows DPAPI 返回了无效数据".to_string());
+    } else {
+        unsafe { std::slice::from_raw_parts(blob.pbData, blob.cbData as usize).to_vec() }
+    };
+    if !blob.pbData.is_null() {
+        unsafe {
+            LocalFree(blob.pbData as HLOCAL);
         }
     }
+    Ok(value)
+}
 
-    if failures.is_empty() {
-        Ok(())
-    } else {
-        Err(format!(
-            "无法完整清除 Windows 凭据管理器登录状态：{}",
-            failures.join("；")
-        ))
+#[cfg(target_os = "windows")]
+fn dpapi_protect(data: &[u8]) -> Result<Vec<u8>, String> {
+    let length = u32::try_from(data.len()).map_err(|_| "登录状态过大".to_string())?;
+    let input = CRYPT_INTEGER_BLOB {
+        cbData: length,
+        pbData: data.as_ptr() as *mut u8,
+    };
+    let mut output = CRYPT_INTEGER_BLOB::default();
+    let protected = unsafe {
+        CryptProtectData(
+            &input,
+            std::ptr::null(),
+            std::ptr::null(),
+            std::ptr::null(),
+            std::ptr::null(),
+            CRYPTPROTECT_UI_FORBIDDEN,
+            &mut output,
+        )
+    };
+    if protected == 0 {
+        return Err(format!(
+            "Windows DPAPI 加密失败：{}",
+            std::io::Error::last_os_error()
+        ));
     }
+    copy_and_free_dpapi_blob(output)
 }
 
-fn delete_credential(account: &str) -> Result<(), String> {
-    match keyring_entry(account)?.delete_credential() {
-        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-        Err(err) => Err(err.to_string()),
+#[cfg(not(target_os = "windows"))]
+fn dpapi_protect(_data: &[u8]) -> Result<Vec<u8>, String> {
+    Err("当前客户端仅支持 Windows DPAPI 登录状态存储".to_string())
+}
+
+#[cfg(target_os = "windows")]
+fn dpapi_unprotect(data: &[u8]) -> Result<Vec<u8>, String> {
+    let length = u32::try_from(data.len()).map_err(|_| "登录状态过大".to_string())?;
+    let input = CRYPT_INTEGER_BLOB {
+        cbData: length,
+        pbData: data.as_ptr() as *mut u8,
+    };
+    let mut output = CRYPT_INTEGER_BLOB::default();
+    let unprotected = unsafe {
+        CryptUnprotectData(
+            &input,
+            std::ptr::null_mut(),
+            std::ptr::null(),
+            std::ptr::null(),
+            std::ptr::null(),
+            CRYPTPROTECT_UI_FORBIDDEN,
+            &mut output,
+        )
+    };
+    if unprotected == 0 {
+        return Err(format!(
+            "Windows DPAPI 无法解密已保存的登录状态：{}",
+            std::io::Error::last_os_error()
+        ));
     }
+    copy_and_free_dpapi_blob(output)
 }
 
-fn clear_legacy_auth_state() -> Result<(), String> {
-    clear_accounts(
-        &[LEGACY_TOKEN_ACCOUNT, LEGACY_USERNAME_ACCOUNT],
-        delete_credential,
-    )
+#[cfg(not(target_os = "windows"))]
+fn dpapi_unprotect(_data: &[u8]) -> Result<Vec<u8>, String> {
+    Err("当前客户端仅支持 Windows DPAPI 登录状态存储".to_string())
 }
 
-fn clear_auth_state_entries<F>(mut delete: F) -> Result<(), String>
-where
-    F: FnMut(&str) -> Result<(), String>,
-{
-    // Delete both legacy records before the new atomic record. If either
-    // legacy deletion fails, leave auth_state intact so the next launch keeps
-    // using the current session instead of falling back to an old token.
-    clear_accounts(
-        &[LEGACY_TOKEN_ACCOUNT, LEGACY_USERNAME_ACCOUNT],
-        |account| delete(account),
-    )?;
-    delete(AUTH_STATE_ACCOUNT)
-}
-
-fn cleanup_failed_auth_save<F>(mut delete: F) -> Result<(), String>
-where
-    F: FnMut(&str) -> Result<(), String>,
-{
-    // A failed save leaves auth_state in the pending form, which is a startup
-    // gate. Clear both legacy records first; if either deletion fails, retain
-    // that gate so load_auth_state cannot fall back to an old account. Only
-    // remove the pending record after legacy cleanup completely succeeds.
-    clear_accounts(
-        &[LEGACY_TOKEN_ACCOUNT, LEGACY_USERNAME_ACCOUNT],
-        |account| delete(account),
-    )?;
-    delete(AUTH_STATE_ACCOUNT)
-}
-
-fn load_legacy_auth_state() -> Result<Option<AuthState>, String> {
-    let token = read_credential(LEGACY_TOKEN_ACCOUNT)?;
-    let username = read_credential(LEGACY_USERNAME_ACCOUNT)?;
-
-    match token {
-        Some(token) if !token.trim().is_empty() => Ok(Some(AuthState {
-            token,
-            username: username.unwrap_or_default(),
-        })),
-        _ => Ok(None),
+fn encode_auth_session_store(store: &AuthSessionStore) -> Result<Vec<u8>, String> {
+    let store = normalize_auth_session_store(store.clone())?;
+    let mut plaintext = serde_json::to_vec(&store).map_err(|_| "无法序列化登录状态".to_string())?;
+    if plaintext.len() > MAX_AUTH_SESSION_PLAINTEXT_BYTES {
+        plaintext.fill(0);
+        return Err("登录状态过大".to_string());
     }
-}
-
-fn load_auth_state_with<R, L>(mut read: R, load_legacy: L) -> Result<Option<AuthState>, String>
-where
-    R: FnMut(&str) -> Result<Option<String>, String>,
-    L: FnOnce() -> Result<Option<AuthState>, String>,
-{
-    if let Some(serialized) = read(AUTH_STATE_ACCOUNT)? {
-        // A pending record is deliberately an error rather than a signal to
-        // fall back to legacy credentials. That prevents a failed save from
-        // reviving either the new token or an older account at next startup.
-        return deserialize_auth_state(&serialized).map(Some);
+    let protected = dpapi_protect(&plaintext);
+    plaintext.fill(0);
+    let protected = protected?;
+    let mut encoded = Vec::with_capacity(AUTH_SESSION_MAGIC.len() + 1 + protected.len());
+    encoded.extend_from_slice(AUTH_SESSION_MAGIC);
+    encoded.push(AUTH_SESSION_FILE_VERSION);
+    encoded.extend_from_slice(&protected);
+    if encoded.len() > MAX_AUTH_SESSION_FILE_BYTES {
+        return Err("登录状态过大".to_string());
     }
-
-    load_legacy()
+    Ok(encoded)
 }
 
-#[tauri::command]
-fn load_auth_state() -> Result<Option<AuthState>, String> {
-    load_auth_state_with(read_credential, load_legacy_auth_state)
+fn decode_auth_session_store(encoded: &[u8]) -> Result<AuthSessionStore, String> {
+    let header_length = AUTH_SESSION_MAGIC.len() + 1;
+    if encoded.len() <= header_length
+        || !encoded.starts_with(AUTH_SESSION_MAGIC)
+        || encoded[AUTH_SESSION_MAGIC.len()] != AUTH_SESSION_FILE_VERSION
+    {
+        return Err("已保存登录状态格式无效".to_string());
+    }
+    let mut plaintext = dpapi_unprotect(&encoded[header_length..])?;
+    let decoded = serde_json::from_slice::<AuthSessionStore>(&plaintext)
+        .map_err(|_| "已保存登录状态内容无效".to_string());
+    plaintext.fill(0);
+    normalize_auth_session_store(decoded?)
 }
 
-fn save_auth_state_with<W, R, D>(
-    state: &AuthState,
-    mut write: W,
-    mut read: R,
-    mut delete: D,
-) -> Result<(), String>
-where
-    W: FnMut(&str) -> Result<(), String>,
-    R: FnMut() -> Result<Option<String>, String>,
-    D: FnMut(&str) -> Result<(), String>,
-{
-    let save_result = (|| {
-        let pending = serialize_stored_auth_state(state, true)?;
-        write(&pending)?;
+fn auth_session_store_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    Ok(app
+        .path()
+        .app_local_data_dir()
+        .map_err(|err| format!("无法定位本机登录状态目录：{err}"))?
+        .join(AUTH_SESSION_FILE))
+}
 
-        match read()? {
-            Some(saved) => verify_pending_auth_state(&saved, state)?,
-            None => {
-                return Err("Windows Credential Manager 未保留待确认登录状态".to_string());
-            }
-        }
+fn auth_session_temp_path(path: &Path) -> PathBuf {
+    let mut filename = path
+        .file_name()
+        .map(OsString::from)
+        .unwrap_or_else(|| OsString::from(AUTH_SESSION_FILE));
+    filename.push(format!(".{}.tmp", std::process::id()));
+    path.with_file_name(filename)
+}
 
-        // This second successful keyring write is the commit. Do not add a
-        // post-commit read that could report failure after an active record
-        // already exists; any earlier failure leaves only a pending record,
-        // which load_auth_state deliberately rejects.
-        let committed = serialize_stored_auth_state(state, false)?;
-        write(&committed)
+#[cfg(target_os = "windows")]
+fn replace_auth_session_file(source: &Path, destination: &Path) -> Result<(), String> {
+    let source_wide = source
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    let destination_wide = destination
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    let moved = unsafe {
+        MoveFileExW(
+            source_wide.as_ptr(),
+            destination_wide.as_ptr(),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+        )
+    };
+    if moved == 0 {
+        return Err(format!(
+            "无法原子更新登录状态：{}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "windows"))]
+fn replace_auth_session_file(source: &Path, destination: &Path) -> Result<(), String> {
+    fs::rename(source, destination).map_err(|err| format!("无法更新登录状态：{err}"))
+}
+
+fn write_auth_session_store(path: &Path, store: &AuthSessionStore) -> Result<(), String> {
+    let encoded = encode_auth_session_store(store)?;
+    let parent = path
+        .parent()
+        .ok_or_else(|| "本机登录状态路径无效".to_string())?;
+    fs::create_dir_all(parent).map_err(|err| format!("无法创建本机登录状态目录：{err}"))?;
+
+    let temporary = auth_session_temp_path(path);
+    match fs::remove_file(&temporary) {
+        Ok(()) => {}
+        Err(err) if err.kind() == ErrorKind::NotFound => {}
+        Err(err) => return Err(format!("无法准备登录状态临时文件：{err}")),
+    }
+    let write_result = (|| {
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)
+            .map_err(|err| format!("无法写入登录状态：{err}"))?;
+        file.write_all(&encoded)
+            .map_err(|err| format!("无法写入登录状态：{err}"))?;
+        file.sync_all()
+            .map_err(|err| format!("无法确认登录状态写入：{err}"))?;
+        replace_auth_session_file(&temporary, path)
     })();
-
-    if let Err(error) = save_result {
-        // Cleanup is only best effort. The pending marker above is the
-        // fail-closed guarantee when Windows refuses to delete the record.
-        return match cleanup_failed_auth_save(|account| delete(account)) {
-            Ok(()) => Err(error),
-            Err(cleanup_error) => Err(format!("{error}；清理失败：{cleanup_error}")),
-        };
+    if write_result.is_err() {
+        let _ = fs::remove_file(&temporary);
     }
-
-    Ok(())
+    write_result
 }
 
-fn write_auth_state_credential(serialized: &str) -> Result<(), String> {
-    keyring_entry(AUTH_STATE_ACCOUNT)?
-        .set_password(serialized)
-        .map_err(|err| err.to_string())
+fn read_auth_session_store(path: &Path) -> Result<Option<AuthSessionStore>, String> {
+    let encoded = match fs::read(path) {
+        Ok(encoded) => encoded,
+        Err(err) if err.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(err) => return Err(format!("无法读取本机登录状态：{err}")),
+    };
+    if encoded.len() > MAX_AUTH_SESSION_FILE_BYTES {
+        return Err("已保存登录状态文件过大".to_string());
+    }
+    decode_auth_session_store(&encoded).map(Some)
+}
+
+fn load_auth_session_store(app: &tauri::AppHandle) -> Result<(PathBuf, AuthSessionStore), String> {
+    let path = auth_session_store_path(app)?;
+    let store = read_auth_session_store(&path)?.unwrap_or_else(AuthSessionStore::empty);
+    Ok((path, store))
+}
+
+fn session_store_for_authenticated_save(path: &Path) -> AuthSessionStore {
+    match read_auth_session_store(path) {
+        Ok(Some(store)) => store,
+        // A malformed or undecryptable vault is never used to recover a
+        // session. A successful fresh login is independently authenticated,
+        // so it may safely establish a new authoritative DPAPI vault.
+        Ok(None) | Err(_) => AuthSessionStore::empty(),
+    }
+}
+
+fn load_auth_session_store_for_authenticated_save(
+    app: &tauri::AppHandle,
+) -> Result<(PathBuf, AuthSessionStore), String> {
+    let path = auth_session_store_path(app)?;
+    let store = session_store_for_authenticated_save(&path);
+    Ok((path, store))
+}
+
+fn persist_session_store(path: &Path, store: &AuthSessionStore) -> Result<(), String> {
+    write_auth_session_store(path, store)
 }
 
 #[tauri::command]
-fn save_auth_state(state: AuthState) -> Result<(), String> {
-    if state.token.trim().is_empty() {
-        return Err("拒绝保存空登录令牌".to_string());
-    }
-
-    save_auth_state_with(
-        &state,
-        write_auth_state_credential,
-        || read_credential(AUTH_STATE_ACCOUNT),
-        delete_credential,
-    )?;
-
-    // The new record contains token and username atomically. Legacy cleanup is
-    // best effort after a committed save; later logout starts with both legacy
-    // records and deliberately preserves auth_state if that cleanup is incomplete.
-    let _ = clear_legacy_auth_state();
-    Ok(())
+fn load_auth_state(
+    app: tauri::AppHandle,
+    session_lock: tauri::State<'_, AuthSessionLock>,
+) -> Result<Option<AuthState>, String> {
+    let _guard = lock_auth_session(&session_lock)?;
+    let (_, store) = load_auth_session_store(&app)?;
+    Ok(active_auth_state(&store))
 }
 
 #[tauri::command]
-fn clear_auth_state() -> Result<(), String> {
-    clear_auth_state_entries(delete_credential)
+fn list_auth_accounts(
+    app: tauri::AppHandle,
+    session_lock: tauri::State<'_, AuthSessionLock>,
+) -> Result<Vec<AuthAccountSummary>, String> {
+    let _guard = lock_auth_session(&session_lock)?;
+    let (_, store) = load_auth_session_store(&app)?;
+    Ok(auth_account_summaries(&store))
+}
+
+#[tauri::command]
+fn save_auth_state(
+    app: tauri::AppHandle,
+    state: AuthState,
+    session_lock: tauri::State<'_, AuthSessionLock>,
+) -> Result<(), String> {
+    let _guard = lock_auth_session(&session_lock)?;
+    let state = normalize_auth_state(&state)?;
+    let (path, mut store) = load_auth_session_store_for_authenticated_save(&app)?;
+    upsert_auth_session(&mut store, &state)?;
+    persist_session_store(&path, &store)
+}
+
+#[tauri::command]
+fn restore_auth_account(
+    app: tauri::AppHandle,
+    username: String,
+    session_lock: tauri::State<'_, AuthSessionLock>,
+) -> Result<Option<AuthState>, String> {
+    let _guard = lock_auth_session(&session_lock)?;
+    let (path, mut store) = load_auth_session_store(&app)?;
+    let state = restore_saved_auth_account(&mut store, &username)?;
+    // Selecting an account without a valid token still deactivates the prior
+    // account, so the login form cannot silently revive it after a restart.
+    persist_session_store(&path, &store)?;
+    Ok(state)
+}
+
+#[tauri::command]
+fn clear_auth_state(
+    app: tauri::AppHandle,
+    username: Option<String>,
+    session_lock: tauri::State<'_, AuthSessionLock>,
+) -> Result<(), String> {
+    let _guard = lock_auth_session(&session_lock)?;
+    let (path, mut store) = load_auth_session_store(&app)?;
+    clear_auth_session(&mut store, username.as_deref())?;
+    // Keep an encrypted empty/username-only store so a later launch has one
+    // authoritative DPAPI source and never needs another credential backend.
+    persist_session_store(&path, &store)
+}
+
+#[tauri::command]
+fn deactivate_auth_state(
+    app: tauri::AppHandle,
+    session_lock: tauri::State<'_, AuthSessionLock>,
+) -> Result<(), String> {
+    let _guard = lock_auth_session(&session_lock)?;
+    let (path, mut store) = load_auth_session_store(&app)?;
+    store.active_username = None;
+    persist_session_store(&path, &store)
+}
+
+#[tauri::command]
+fn remove_auth_account(
+    app: tauri::AppHandle,
+    username: String,
+    session_lock: tauri::State<'_, AuthSessionLock>,
+) -> Result<(), String> {
+    let _guard = lock_auth_session(&session_lock)?;
+    let (path, mut store) = load_auth_session_store(&app)?;
+    remove_auth_account_record(&mut store, &username)?;
+    persist_session_store(&path, &store)
 }
 
 #[tauri::command]
@@ -481,13 +968,18 @@ fn send_native_notification(
 
 pub fn run() {
     tauri::Builder::default()
+        .manage(AuthSessionLock(Mutex::new(())))
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .invoke_handler(tauri::generate_handler![
             load_auth_state,
+            list_auth_accounts,
             save_auth_state,
+            restore_auth_account,
             clear_auth_state,
+            deactivate_auth_state,
+            remove_auth_account,
             open_notification_settings,
             send_native_notification,
             append_log,
@@ -620,271 +1112,208 @@ mod report_export_tests {
 #[cfg(test)]
 mod auth_state_tests {
     use super::*;
-    use std::cell::RefCell;
-    use std::rc::Rc;
 
-    #[test]
-    fn committed_auth_state_round_trips_while_pending_state_is_rejected() {
-        let expected = AuthState {
-            token: "service-jwt".to_string(),
-            username: "alice".to_string(),
-        };
+    fn state(username: &str, token: &str) -> AuthState {
+        AuthState {
+            username: username.to_string(),
+            token: token.to_string(),
+        }
+    }
 
-        let legacy_serialized = serde_json::to_string(&expected).unwrap();
-        assert_eq!(
-            deserialize_auth_state(&legacy_serialized).unwrap(),
-            expected
-        );
-
-        let committed = serialize_stored_auth_state(&expected, false).unwrap();
-        assert_eq!(deserialize_auth_state(&committed).unwrap(), expected);
-
-        let pending = serialize_stored_auth_state(&expected, true).unwrap();
-        let pending_error = deserialize_auth_state(&pending).unwrap_err();
-        assert!(pending_error.contains("尚未确认"));
-
-        assert!(deserialize_auth_state("not-json").is_err());
-        assert!(deserialize_auth_state(r#"{"token":"","username":"alice"}"#).is_err());
+    fn empty_store() -> AuthSessionStore {
+        AuthSessionStore::empty()
     }
 
     #[test]
-    fn verified_pending_state_commits_without_a_post_commit_read() {
-        let expected = AuthState {
-            token: "service-jwt".to_string(),
-            username: "alice".to_string(),
-        };
-        let stored = Rc::new(RefCell::new(None::<String>));
-        let writes = Rc::new(RefCell::new(Vec::<String>::new()));
-
-        save_auth_state_with(
-            &expected,
-            {
-                let stored = Rc::clone(&stored);
-                let writes = Rc::clone(&writes);
-                move |serialized| {
-                    writes.borrow_mut().push(serialized.to_string());
-                    *stored.borrow_mut() = Some(serialized.to_string());
-                    Ok(())
-                }
-            },
-            {
-                let stored = Rc::clone(&stored);
-                move || Ok(stored.borrow().clone())
-            },
-            |_| Ok(()),
-        )
-        .unwrap();
-
-        assert_eq!(writes.borrow().len(), 2);
+    fn rejects_invalid_usernames_tokens_duplicates_and_inconsistent_active_account() {
+        assert!(normalize_auth_state(&state("", "token")).is_err());
+        assert!(normalize_auth_state(&state("alice\nadmin", "token")).is_err());
+        assert!(normalize_auth_state(&state("alice", "")).is_err());
         assert!(
-            deserialize_stored_auth_state(&writes.borrow()[0])
-                .unwrap()
-                .pending
+            normalize_auth_state(&state("alice", &"x".repeat(MAX_AUTH_TOKEN_BYTES + 1),)).is_err()
         );
-        assert!(
-            !deserialize_stored_auth_state(&writes.borrow()[1])
-                .unwrap()
-                .pending
-        );
-        assert_eq!(
-            load_auth_state_with(
-                {
-                    let stored = Rc::clone(&stored);
-                    move |_| Ok(stored.borrow().clone())
+
+        let duplicate = AuthSessionStore {
+            version: AUTH_SESSION_STORE_VERSION,
+            active_username: None,
+            accounts: vec![
+                AuthAccountRecord {
+                    username: "Alice".to_string(),
+                    token: Some("token-a".to_string()),
+                    last_used: 1,
                 },
-                || Ok(None),
+                AuthAccountRecord {
+                    username: "Alice".to_string(),
+                    token: Some("token-b".to_string()),
+                    last_used: 2,
+                },
+            ],
+        };
+        assert!(normalize_auth_session_store(duplicate).is_err());
+
+        let case_sensitive_accounts = AuthSessionStore {
+            version: AUTH_SESSION_STORE_VERSION,
+            active_username: Some("Alice".to_string()),
+            accounts: vec![
+                AuthAccountRecord {
+                    username: "Alice".to_string(),
+                    token: Some("token-a".to_string()),
+                    last_used: 1,
+                },
+                AuthAccountRecord {
+                    username: "alice".to_string(),
+                    token: Some("token-b".to_string()),
+                    last_used: 2,
+                },
+            ],
+        };
+        assert!(normalize_auth_session_store(case_sensitive_accounts).is_ok());
+
+        let mut missing_active = empty_store();
+        missing_active.active_username = Some("nobody".to_string());
+        assert!(normalize_auth_session_store(missing_active).is_err());
+    }
+
+    #[test]
+    fn keeps_multiple_accounts_and_evicts_only_the_least_recently_used() {
+        let mut store = empty_store();
+        for index in 0..MAX_AUTH_ACCOUNTS {
+            upsert_auth_session(
+                &mut store,
+                &state(&format!("user-{index}"), &format!("token-{index}")),
             )
-            .unwrap(),
-            Some(expected)
+            .unwrap();
+        }
+        upsert_auth_session(&mut store, &state("new-user", "new-token")).unwrap();
+
+        assert_eq!(store.accounts.len(), MAX_AUTH_ACCOUNTS);
+        assert!(!store
+            .accounts
+            .iter()
+            .any(|account| account.username == "user-0"));
+        assert!(store
+            .accounts
+            .iter()
+            .any(|account| account.username == "new-user"));
+        assert_eq!(
+            active_auth_state(&store),
+            Some(state("new-user", "new-token"))
         );
     }
 
     #[test]
-    fn failed_pending_save_is_rejected_after_auth_state_delete_failure_and_restart() {
-        let new_state = AuthState {
-            token: "new-service-jwt".to_string(),
-            username: "bob".to_string(),
-        };
-        let stored = Rc::new(RefCell::new(None::<String>));
-        let deleted = Rc::new(RefCell::new(Vec::<String>::new()));
+    fn restoring_an_account_preserves_the_other_account_token() {
+        let mut store = empty_store();
+        upsert_auth_session(&mut store, &state("alice", "alice-token")).unwrap();
+        upsert_auth_session(&mut store, &state("bob", "bob-token")).unwrap();
 
-        let error = save_auth_state_with(
-            &new_state,
-            {
-                let stored = Rc::clone(&stored);
-                move |serialized| {
-                    *stored.borrow_mut() = Some(serialized.to_string());
-                    Ok(())
-                }
-            },
-            || Err("simulated readback failure".to_string()),
-            {
-                let deleted = Rc::clone(&deleted);
-                move |account| {
-                    deleted.borrow_mut().push(account.to_string());
-                    if account == AUTH_STATE_ACCOUNT {
-                        Err("simulated auth_state delete failure".to_string())
-                    } else {
-                        Ok(())
-                    }
-                }
-            },
-        )
-        .unwrap_err();
-
-        assert!(error.contains("simulated readback failure"));
-        assert!(error.contains("simulated auth_state delete failure"));
         assert_eq!(
-            *deleted.borrow(),
-            vec![
-                LEGACY_TOKEN_ACCOUNT.to_string(),
-                LEGACY_USERNAME_ACCOUNT.to_string(),
-                AUTH_STATE_ACCOUNT.to_string(),
-            ]
+            restore_saved_auth_account(&mut store, "alice").unwrap(),
+            Some(state("alice", "alice-token"))
         );
-        let pending = stored.borrow().clone().unwrap();
-        assert!(deserialize_stored_auth_state(&pending).unwrap().pending);
-
-        let restart_error = load_auth_state_with(
-            {
-                let stored = Rc::clone(&stored);
-                move |account| {
-                    assert_eq!(account, AUTH_STATE_ACCOUNT);
-                    Ok(stored.borrow().clone())
-                }
-            },
-            || panic!("pending auth_state must not fall back to legacy credentials"),
-        )
-        .unwrap_err();
-        assert!(restart_error.contains("尚未确认"));
-    }
-
-    #[test]
-    fn failed_pending_save_preserves_gate_when_legacy_token_delete_fails() {
-        let new_state = AuthState {
-            token: "new-service-jwt".to_string(),
-            username: "bob".to_string(),
-        };
-        let stored = Rc::new(RefCell::new(None::<String>));
-        let deleted = Rc::new(RefCell::new(Vec::<String>::new()));
-
-        let error = save_auth_state_with(
-            &new_state,
-            {
-                let stored = Rc::clone(&stored);
-                move |serialized| {
-                    *stored.borrow_mut() = Some(serialized.to_string());
-                    Ok(())
-                }
-            },
-            || Err("simulated pending verification failure".to_string()),
-            {
-                let deleted = Rc::clone(&deleted);
-                move |account| {
-                    deleted.borrow_mut().push(account.to_string());
-                    if account == LEGACY_TOKEN_ACCOUNT {
-                        Err("simulated legacy token delete failure".to_string())
-                    } else {
-                        // Deleting AUTH_STATE_ACCOUNT would succeed, but the
-                        // legacy failure must prevent this callback from being
-                        // reached for that account.
-                        Ok(())
-                    }
-                }
-            },
-        )
-        .unwrap_err();
-
-        assert!(error.contains("simulated pending verification failure"));
-        assert!(error.contains("simulated legacy token delete failure"));
         assert_eq!(
-            *deleted.borrow(),
-            vec![
-                LEGACY_TOKEN_ACCOUNT.to_string(),
-                LEGACY_USERNAME_ACCOUNT.to_string(),
-            ]
+            active_auth_state(&store),
+            Some(state("alice", "alice-token"))
         );
-        let pending = stored.borrow().clone().unwrap();
-        assert!(deserialize_stored_auth_state(&pending).unwrap().pending);
-
-        let restart_error = load_auth_state_with(
-            {
-                let stored = Rc::clone(&stored);
-                move |account| {
-                    assert_eq!(account, AUTH_STATE_ACCOUNT);
-                    Ok(stored.borrow().clone())
-                }
-            },
-            || panic!("pending auth_state must not fall back to legacy credentials"),
-        )
-        .unwrap_err();
-        assert!(restart_error.contains("尚未确认"));
-    }
-
-    #[test]
-    fn cleanup_attempts_both_legacy_records_before_preserving_current_session() {
-        let mut attempted = Vec::new();
-        let result = clear_auth_state_entries(|account| {
-            attempted.push(account.to_string());
-            if account == LEGACY_TOKEN_ACCOUNT {
-                Err("simulated delete failure".to_string())
-            } else {
-                Ok(())
-            }
-        });
-
         assert_eq!(
-            attempted,
-            vec![
-                LEGACY_TOKEN_ACCOUNT.to_string(),
-                LEGACY_USERNAME_ACCOUNT.to_string(),
-            ]
-        );
-        let error = result.unwrap_err();
-        assert!(error.contains(LEGACY_TOKEN_ACCOUNT));
-        assert!(error.contains("simulated delete failure"));
-    }
-
-    #[test]
-    fn cleanup_removes_current_record_only_after_legacy_records_are_gone() {
-        let mut attempted = Vec::new();
-        clear_auth_state_entries(|account| {
-            attempted.push(account.to_string());
-            Ok(())
-        })
-        .unwrap();
-
-        assert_eq!(
-            attempted,
-            vec![
-                LEGACY_TOKEN_ACCOUNT.to_string(),
-                LEGACY_USERNAME_ACCOUNT.to_string(),
-                AUTH_STATE_ACCOUNT.to_string(),
-            ]
+            store
+                .accounts
+                .iter()
+                .find(|account| account.username == "bob")
+                .and_then(|account| account.token.as_deref()),
+            Some("bob-token")
         );
     }
 
     #[test]
-    fn failed_save_cleanup_preserves_pending_gate_when_legacy_cleanup_fails() {
-        let mut attempted = Vec::new();
-        let result = cleanup_failed_auth_save(|account| {
-            attempted.push(account.to_string());
-            if account == LEGACY_TOKEN_ACCOUNT {
-                Err("simulated legacy delete failure".to_string())
-            } else {
-                Ok(())
-            }
-        });
+    fn clearing_a_session_keeps_the_username_and_only_affects_the_target_account() {
+        let mut store = empty_store();
+        upsert_auth_session(&mut store, &state("alice", "alice-token")).unwrap();
+        upsert_auth_session(&mut store, &state("bob", "bob-token")).unwrap();
 
+        clear_auth_session(&mut store, Some("alice")).unwrap();
+        assert_eq!(active_auth_state(&store), Some(state("bob", "bob-token")));
         assert_eq!(
-            attempted,
-            vec![
-                LEGACY_TOKEN_ACCOUNT.to_string(),
-                LEGACY_USERNAME_ACCOUNT.to_string(),
-            ]
+            store
+                .accounts
+                .iter()
+                .find(|account| account.username == "alice")
+                .and_then(|account| account.token.as_deref()),
+            None
         );
-        let error = result.unwrap_err();
-        assert!(error.contains(LEGACY_TOKEN_ACCOUNT));
-        assert!(error.contains("simulated legacy delete failure"));
+        assert!(store
+            .accounts
+            .iter()
+            .any(|account| account.username == "alice"));
+
+        remove_auth_account_record(&mut store, "alice").unwrap();
+        assert!(!store
+            .accounts
+            .iter()
+            .any(|account| account.username == "alice"));
+        assert_eq!(active_auth_state(&store), Some(state("bob", "bob-token")));
+    }
+
+    #[test]
+    fn account_summaries_never_serialize_a_token() {
+        let mut store = empty_store();
+        upsert_auth_session(&mut store, &state("alice", "private-token")).unwrap();
+
+        let summaries = auth_account_summaries(&store);
+        let serialized = serde_json::to_string(&summaries).unwrap();
+        assert_eq!(summaries.len(), 1);
+        assert!(summaries[0].has_session);
+        assert!(summaries[0].is_active);
+        assert!(!serialized.contains("private-token"));
+        assert!(!serialized.contains("token"));
+    }
+
+    #[cfg(target_os = "windows")]
+    fn auth_test_path(label: &str) -> PathBuf {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "focus-task-auth-{label}-{}-{nonce}.dpapi",
+            std::process::id()
+        ))
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn dpapi_round_trips_a_valid_store() {
+        let mut store = empty_store();
+        upsert_auth_session(&mut store, &state("alice", "service-jwt")).unwrap();
+
+        let encoded = encode_auth_session_store(&store).unwrap();
+        assert!(encoded.starts_with(AUTH_SESSION_MAGIC));
+        assert_eq!(decode_auth_session_store(&encoded).unwrap(), store);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn corrupt_vault_fails_closed_but_a_fresh_login_can_replace_it() {
+        let path = auth_test_path("corrupt");
+        let _ = fs::remove_file(&path);
+        fs::write(&path, b"not-a-dpapi-vault").unwrap();
+
+        assert!(read_auth_session_store(&path).is_err());
+        let mut replacement = session_store_for_authenticated_save(&path);
+        assert_eq!(replacement, empty_store());
+        upsert_auth_session(&mut replacement, &state("alice", "fresh-token")).unwrap();
+        write_auth_session_store(&path, &replacement).unwrap();
+        assert_eq!(read_auth_session_store(&path).unwrap(), Some(replacement));
+
+        fs::remove_file(path).unwrap();
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn named_mutex_can_be_reacquired_after_the_previous_guard_drops() {
+        assert_eq!(AUTH_SESSION_MUTEX_NAME, r"Local\FocusTaskAuthSessionV1");
+        let first = CrossProcessAuthSessionLock::acquire().unwrap();
+        drop(first);
+        CrossProcessAuthSessionLock::acquire().unwrap();
     }
 }
