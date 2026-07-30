@@ -97,8 +97,13 @@ describe('登录页已记住账号选择', () => {
     await mountLogin()
     const usernameInput = mountPoint?.querySelector<HTMLInputElement>('#login-username')
     usernameInput?.focus()
+    await vi.waitFor(() => {
+      expect(mountPoint?.textContent).toContain('已记住的账号')
+      expect(mountPoint?.textContent).toContain('bob')
+    })
     const bobOption = [...(mountPoint?.querySelectorAll<HTMLButtonElement>('button') || [])]
       .find(button => button.textContent?.includes('bob'))
+    expect(bobOption).toBeDefined()
     bobOption?.click()
 
     await vi.waitFor(() => {
@@ -116,8 +121,13 @@ describe('登录页已记住账号选择', () => {
     await mountLogin()
     const usernameInput = mountPoint?.querySelector<HTMLInputElement>('#login-username')
     usernameInput?.focus()
+    await vi.waitFor(() => {
+      expect(mountPoint?.textContent).toContain('已记住的账号')
+      expect(mountPoint?.textContent).toContain('alice')
+    })
     const aliceOption = [...(mountPoint?.querySelectorAll<HTMLButtonElement>('button') || [])]
       .find(button => button.textContent?.includes('alice'))
+    expect(aliceOption).toBeDefined()
     aliceOption?.click()
 
     await vi.waitFor(() => {
