@@ -80,6 +80,19 @@
       <span>报告</span>
     </div>
 
+    <div class="sidebar-section-label">归档</div>
+    <div
+      class="sidebar-item"
+      :class="{ active: !isSettingsRoute && store.currentView === 'trash' }"
+      @click="openTrash"
+    >
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="oklch(48% 0.03 245)" stroke-width="1.5" style="flex-shrink:0">
+        <path d="M2 4.5h12M5.5 7v4.5M10.5 7v4.5M5 4.5l.7-2h4.6l.7 2M3.8 4.5l.6 9h7.2l.6-9" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      <span>垃圾桶</span>
+      <span v-if="trashStore.count" class="sidebar-badge">{{ trashStore.count }}</span>
+    </div>
+
     <div class="sidebar-section-label">偏好</div>
     <div
       class="sidebar-item"
@@ -98,11 +111,13 @@
 import { computed } from 'vue'
 import { useTaskStore } from '@/stores/taskStore'
 import { useRequirementStore } from '@/stores/requirementStore'
+import { useTrashStore } from '@/stores/trashStore'
 import { toDateKey } from '@/utils/dateTime'
 import { useRoute, useRouter } from 'vue-router'
 
 const store = useTaskStore()
 const requirementStore = useRequirementStore()
+const trashStore = useTrashStore()
 const route = useRoute()
 const router = useRouter()
 const isSettingsRoute = computed(() => route.path === '/settings')
@@ -169,9 +184,15 @@ function openRequirements() {
 
 function openTeammates() {
   store.filterQuadrant = null
-  // currentView's type union doesn't include 'teammates' yet (added by another
-  // flow). Cast through any so setView accepts it without editing taskStore.
-  store.setView('teammates' as any)
+  store.setView('teammates')
+  if (route.path === '/settings') {
+    router.push('/')
+  }
+}
+
+function openTrash() {
+  store.filterQuadrant = null
+  store.setView('trash')
   if (route.path === '/settings') {
     router.push('/')
   }

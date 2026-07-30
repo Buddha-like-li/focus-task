@@ -28,7 +28,12 @@
             <rect x="2" y="2" width="12" height="12" rx="2"/><line x1="10" y1="2" x2="10" y2="14"/>
           </svg>
         </button>
-        <button class="btn-icon btn-danger" @click="clearDone" title="清除已完成">
+        <button
+          class="btn-icon btn-danger"
+          :disabled="movingDoneToTrash"
+          @click="moveDoneToTrash"
+          :title="movingDoneToTrash ? '正在移入垃圾桶' : '将已完成任务移入垃圾桶'"
+        >
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" width="20" height="20">
             <path d="M3 4h10M6 4V2.5a.5.5 0 0 1 .5-.5h3a.5.5 0 0 1 .5.5V4M5 4l.5 8.5h5L11 4"/>
           </svg>
@@ -62,6 +67,11 @@
         >
           {{ reconnecting ? '连接中...' : '重新连接' }}
         </button>
+      </div>
+
+      <div v-if="batchMoveError" class="batch-move-status" role="alert">
+        <span>{{ batchMoveError }}</span>
+        <button type="button" class="batch-move-dismiss" @click="batchMoveError = ''">关闭</button>
       </div>
 
       <SettingsView v-if="isSettingsRoute" />
@@ -118,6 +128,9 @@
       <!-- Reports View -->
       <ReportsView v-else-if="isReportsView" />
 
+      <!-- Trash View -->
+      <TrashView v-else-if="isTrashView" />
+
       <!-- Summary View -->
       <SummaryView v-else-if="isSummaryView" />
 
@@ -163,7 +176,7 @@
       <div class="context-sep"></div>
       <div class="context-item danger" @click="ctxAction('delete')">
         <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" width="14" height="14"><path d="M3 4h10M6 4V2.5a.5.5 0 0 1 .5-.5h3a.5.5 0 0 1 .5.5V4M5 4l.5 8.5h5L11 4"/></svg>
-        删除任务
+        移入垃圾桶
       </div>
     </div>
 
@@ -209,6 +222,7 @@ import { NModal, NCard, NButton, NProgress } from 'naive-ui'
 import { useTaskStore } from '@/stores/taskStore'
 import { useAuthStore } from '@/stores/authStore'
 import { useRequirementStore } from '@/stores/requirementStore'
+import { useTrashStore } from '@/stores/trashStore'
 import { formatInstallPhase, useAppUpdate } from '@/composables/useAppUpdate'
 import { isTauriRuntime } from '@/utils/platform'
 import { appLogger } from '@/composables/useAppLogger'
@@ -217,6 +231,7 @@ import Sidebar from '@/components/Sidebar.vue'
 import QuadrantCard from '@/components/QuadrantCard.vue'
 import DetailPanel from '@/components/DetailPanel.vue'
 import ReportsView from '@/views/ReportsView.vue'
+import TrashView from '@/views/TrashView.vue'
 import SummaryView from '@/views/SummaryView.vue'
 import RequirementsView from '@/views/RequirementsView.vue'
 import TeammatesView from '@/views/TeammatesView.vue'
@@ -225,17 +240,21 @@ import SettingsView from '@/views/SettingsView.vue'
 const store = useTaskStore()
 const auth = useAuthStore()
 const requirementStore = useRequirementStore()
+const trashStore = useTrashStore()
 const route = useRoute()
 const router = useRouter()
 const panelOpen = ref(true)
 const reconnecting = ref(false)
+const movingDoneToTrash = ref(false)
+const batchMoveError = ref('')
 const isSettingsRoute = computed(() => route.path === '/settings')
 const isReportsView = computed(() => !isSettingsRoute.value && store.currentView === 'reports')
+const isTrashView = computed(() => !isSettingsRoute.value && store.currentView === 'trash')
 const isSummaryView = computed(() => !isSettingsRoute.value && store.currentView === 'summary')
 const isRequirementsView = computed(() => !isSettingsRoute.value && store.currentView === 'requirements')
-const isTeammatesView = computed(() => !isSettingsRoute.value && (store.currentView as string) === 'teammates')
-const isFullView = computed(() => isReportsView.value || isSummaryView.value || isRequirementsView.value || isTeammatesView.value)
-const showTaskChrome = computed(() => !isSettingsRoute.value)
+const isTeammatesView = computed(() => !isSettingsRoute.value && store.currentView === 'teammates')
+const isFullView = computed(() => isReportsView.value || isTrashView.value || isSummaryView.value || isRequirementsView.value || isTeammatesView.value)
+const showTaskChrome = computed(() => !isSettingsRoute.value && !isTrashView.value)
 
 // ─── Window Dragging ───
 // Tauri v2 official approach: listen to mousedown on the header element by ID,
@@ -320,21 +339,43 @@ function hideContextMenu() {
   contextMenu.visible = false
 }
 
-function ctxAction(action: string, quadrant?: number) {
+async function ctxAction(action: string, quadrant?: number) {
   const cid = contextMenu.clientId
   if (action === 'edit') {
     store.selectTask(cid)
   } else if (action === 'move' && quadrant) {
-    store.updateTask(cid, { quadrant })
+    await store.updateTask(cid, { quadrant })
   } else if (action === 'delete') {
-    store.removeTask(cid)
+    await store.moveTaskToTrash(cid)
   }
   hideContextMenu()
 }
 
-function clearDone() {
-  const done = store.activeTasks.filter(t => t.done)
-  done.forEach(t => store.removeTask(t.clientId))
+async function moveDoneToTrash() {
+  const completed = store.activeTasks.filter(t => t.done)
+  const completedIds = new Set(completed.map(task => task.clientId))
+  // 删除父任务会由服务端级联当前子任务；不要再对同批子任务重复请求。
+  const done = completed.filter(task => !task.parentTaskId || !completedIds.has(task.parentTaskId))
+  if (done.length === 0) return
+  if (!window.confirm(`将 ${done.length} 项已完成任务移入垃圾桶？可在垃圾桶中恢复。`)) return
+  movingDoneToTrash.value = true
+  batchMoveError.value = ''
+  try {
+    const results = await Promise.all(done.map(task => store.moveTaskToTrash(task.clientId)))
+    const failedCount = results.filter(result => !result).length
+    if (failedCount > 0) {
+      const movedCount = done.length - failedCount
+      batchMoveError.value = movedCount > 0
+        ? `已将 ${movedCount} 项已完成任务移入垃圾桶；另有 ${failedCount} 项未能移入，请确认本地服务正常后重试。`
+        : `未能将 ${failedCount} 项已完成任务移入垃圾桶，请确认本地服务正常后重试。`
+    }
+    if (results.some(Boolean)) {
+      // 导航徽章的数量来自独立垃圾桶接口；移动成功后异步刷新它。
+      void trashStore.fetchTrash().catch(() => undefined)
+    }
+  } finally {
+    movingDoneToTrash.value = false
+  }
 }
 
 async function reconnect() {
@@ -395,6 +436,9 @@ onMounted(() => {
   // The Windows client talks directly to the local Focus Task service. A failed
   // initial request is logged and never falls back to a separate task store.
   store.fetchTasks().catch(() => {})
+
+  // 垃圾桶数量独立于工作台任务缓存，启动时拉取以保持导航徽章准确。
+  trashStore.fetchTrash().catch(() => {})
 
   // P2-4: 需求池独立拉取（失败不阻塞主流程）
   requirementStore.fetchAll().catch(() => {})
@@ -548,6 +592,31 @@ onUnmounted(() => {
 }
 .service-status-retry:hover:not(:disabled) { background: oklch(94% 0.04 70); }
 .service-status-retry:disabled { cursor: wait; opacity: 0.7; }
+
+.batch-move-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 10px 18px 0;
+  padding: 9px 11px;
+  border: 1px solid oklch(82% 0.08 25);
+  border-radius: 6px;
+  background: oklch(98% 0.025 25);
+  color: oklch(42% 0.14 25);
+  font-size: 13px;
+}
+
+.batch-move-dismiss {
+  flex: 0 0 auto;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  text-decoration: underline;
+}
 
 .matrix-area {
   /* 底部 56px 一次给足，其中为右下角同步状态浮层预留避让空间。 */

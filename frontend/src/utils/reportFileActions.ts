@@ -78,3 +78,18 @@ export async function revealReportMarkdownFile(
   await invoke('reveal_report_markdown', { filename })
   return 'desktop'
 }
+
+/**
+ * Removes only task-specific Markdown copies previously saved by this app.
+ * The native command resolves the fixed Documents\\Focus Task\\Reports folder
+ * itself and rejects invalid task identifiers; no user-provided path is used.
+ */
+export async function deleteTaskReportCopies(taskId: number): Promise<number> {
+  if (!Number.isSafeInteger(taskId) || taskId <= 0) {
+    throw new Error('任务编号无效，无法清理本机报告副本。')
+  }
+  if (!isTauriRuntime()) return 0
+
+  const { invoke } = await import('@tauri-apps/api/core')
+  return invoke<number>('delete_task_report_copies', { taskId })
+}
