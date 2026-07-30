@@ -77,6 +77,7 @@
             class="task-belonging-history"
             aria-label="历史任务归属"
             :disabled="readonly || taskBelongingSaving"
+            @mousedown="prepareTaskBelongingHistorySelection"
             @change="selectTaskBelongingSuggestion"
           >
             <option value="">选择历史归属</option>
@@ -385,6 +386,8 @@ const taskBelongingDraft = ref(defaultTaskBelonging)
 const taskBelongingSaving = ref(false)
 const taskBelongingSavingClientId = ref<string | null>(null)
 const pendingTaskBelonging = ref<string | null>(null)
+let suppressTaskBelongingInputSave = false
+let taskBelongingHistorySelectionTimer: number | null = null
 
 function normalizeTaskBelonging(value: string | undefined): string {
   return value?.trim() || defaultTaskBelonging
@@ -482,6 +485,19 @@ function setTaskBelongingDraft(event: Event) {
   taskBelongingDraft.value = (event.target as HTMLInputElement).value
 }
 
+function prepareTaskBelongingHistorySelection() {
+  // 点击选择框会让输入框失焦。保留一个短暂标志，跳过这一轮由点击历史
+  // 选择框触发的 change/blur；真正的选择由 select 的 change 直接保存。
+  suppressTaskBelongingInputSave = true
+  if (taskBelongingHistorySelectionTimer !== null) {
+    window.clearTimeout(taskBelongingHistorySelectionTimer)
+  }
+  taskBelongingHistorySelectionTimer = window.setTimeout(() => {
+    suppressTaskBelongingInputSave = false
+    taskBelongingHistorySelectionTimer = null
+  }, 0)
+}
+
 async function selectTaskBelongingSuggestion(event: Event) {
   const select = event.target as HTMLSelectElement
   const taskBelonging = select.value
@@ -495,6 +511,13 @@ async function selectTaskBelongingSuggestion(event: Event) {
 async function saveTaskBelonging(event?: Event) {
   if (event?.target instanceof HTMLInputElement) {
     taskBelongingDraft.value = event.target.value
+  }
+
+  if (
+    suppressTaskBelongingInputSave
+    && (event?.type === 'change' || event?.type === 'blur')
+  ) {
+    return
   }
 
   const clientId = task.value?.clientId

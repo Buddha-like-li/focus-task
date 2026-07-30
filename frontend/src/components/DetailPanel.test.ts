@@ -206,6 +206,36 @@ describe('DetailPanel task belonging', () => {
     expect(history.value).toBe('')
   })
 
+  it('uses the selected history without saving unsaved input during the focus switch', async () => {
+    const { taskStore, input } = await mountDetailPanel([
+      makeTask(),
+      makeTask({ id: 2, clientId: 'history-task', taskBelonging: '客户专项' }),
+    ])
+    vi.spyOn(taskStore, 'updateTask').mockImplementation(async (_clientId, updates) => {
+      Object.assign(taskStore.tasks[0]!, updates)
+      return true
+    })
+    const history = mountPoint!.querySelector<HTMLSelectElement>('[data-testid="task-belonging-history"]')!
+
+    input.value = '不应先保存的文字'
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    history.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }))
+    input.dispatchEvent(new Event('change', { bubbles: true }))
+    input.dispatchEvent(new FocusEvent('blur'))
+
+    expect(taskStore.updateTask).not.toHaveBeenCalled()
+    expect(history.disabled).toBe(false)
+
+    history.value = '客户专项'
+    history.dispatchEvent(new Event('change', { bubbles: true }))
+
+    await vi.waitFor(() => {
+      expect(taskStore.updateTask).toHaveBeenCalledTimes(1)
+      expect(taskStore.updateTask).toHaveBeenCalledWith('selected-task', { taskBelonging: '客户专项' })
+    })
+    expect(input.value).toBe('客户专项')
+  })
+
   it('saves the default belonging when the user clears the field', async () => {
     const { taskStore, input } = await mountDetailPanel([makeTask({ taskBelonging: '客户专项' })])
     vi.spyOn(taskStore, 'updateTask').mockImplementation(async (_clientId, updates) => {
