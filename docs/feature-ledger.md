@@ -21,7 +21,7 @@
 | 报告文档本机文件操作 | 文档归档中的每份任务 Markdown 可预览、保存到 Windows 本机，并可首次直接保存后定位到所在文件夹；同名用户手工编辑的文件不会被后续定位操作覆盖。汇总报告同样保存到可见目录。桌面端目录为 `Documents\Focus Task\Reports`，浏览器开发模式退回普通下载。 | `frontend/src/views/ReportsView.vue`、`frontend/src/utils/reportFileActions.ts`、`frontend/src/views/ReportsView.test.ts`、`frontend/src-tauri/src/lib.rs`、`docs/task-records/2026-07-29-codex-report-open-local-file.md` | 已审核合入，随 v2.3.8 发布 |
 | 协作界面 | 需求池、关联任务、团队、邀请、角色、成员只读任务视图、评论和任务转交界面。 | `frontend/src/views/RequirementsView.vue`、`TeammatesView.vue`、`frontend/src/stores/requirementStore.ts`、`teamStore.ts` | 当前源码包含；服务 API 契约须联调 |
 | 页面布局与长文本适配 | 登录、四象限、需求池、报告、设置、团队和内容详情在窄窗口、长标题、长用户名、长标签和多日期图表下保持可读、可滚动和可操作；右键菜单会按实际尺寸留在可视区域内。 | `frontend/src/views/AppLayout.vue`、`ReportsView.vue`、`RequirementsView.vue`、`SettingsView.vue`、相关组件及四份 `codex-ui-polish` 任务记录 | 已独立审核合入，随 v2.3.8 发布 |
-| Windows 体验 | Windows 通知、错误日志落盘、安装包内 WebView2 loader、应用内更新检查。静默检查不会占用手动“检查中”状态；更新弹窗显示连接、下载、安装、重启或失败原因。 | `frontend/src/utils/notifications.ts`、`frontend/src/composables/useAppLogger.ts`、`frontend/src/composables/useAppUpdate.ts`、`frontend/src/composables/useAppUpdate.test.ts`、`frontend/src-tauri/src/lib.rs`、`.github/workflows/release.yml` | `v2.3.5` 已公开发布 |
+| Windows 体验 | Windows 通知、错误日志落盘、安装包内 WebView2 loader、应用内更新检查。静默检查不会占用手动“检查中”状态；更新弹窗显示连接、下载、安装、重启或失败原因。自建任务不触发开始和截止提醒；转交接收任务保留开始和截止提醒；逾期从截止日期次日开始。 | `frontend/src/utils/notifications.ts`、`frontend/src/utils/dateTime.ts`、`frontend/src/composables/useAppLogger.ts`、`frontend/src/composables/useAppUpdate.ts`、`frontend/src/composables/useAppUpdate.test.ts`、`frontend/src/utils/notifications.test.ts`、`frontend/src/utils/dateTime.test.ts`、`frontend/src-tauri/src/lib.rs`、`.github/workflows/release.yml` | 提醒规则已在 `codex/task-notification-rules` 实现并待独立审核；其他体验随 `v2.3.5` 已公开发布 |
 | 中文发布与更新说明 | GitHub Release 标题、正文、更新清单和桌面端更新弹窗共用同一份中文说明；发布前会拒绝空白或含英文的用户说明。 | `docs/release-notes/`、`scripts/validate-release-notes.sh`、`.github/workflows/release.yml`、`frontend/src/composables/useAppUpdate.ts`、`frontend/src/views/SettingsView.vue`、`frontend/src/views/AppLayout.vue` | `v2.3.6` tag 已推送，签名 CI 待完成 |
 | 服务不可用反馈 | 本机服务不可达时显示明确连接信息；恢复服务后可重新加载。 | `frontend/src/api/base.ts`、`frontend/src/views/AppLayout.vue`、`frontend/src/views/AppLayout.test.ts` | 当前源码包含 |
 
@@ -65,6 +65,7 @@
 - v2.3.8 将汇总此前未打 tag 的登录持久化、任务归属、需求转任务和本机报告文件动作，并加入已审核的页面布局与长文本优化；只构建 Windows 客户端，不改变本地服务、用户数据或 API 契约。发布前验证、书面例外和推送证据见 `task-records/2026-07-29-codex-v2-3-8-ui-polish-release.md`。
 - v2.3.9 修复桌面端登录状态保存失败：客户端不再使用失效的凭据管理器依赖，改用当前 Windows 用户范围的本机加密多账号会话仓。集成验证为前端 83/83、Rust 15/15、生产构建、格式和差异检查；本地 NSIS 安装包已生成。详细证据见 2026-07-30 的认证任务记录与发布任务记录。
 - v2.3.10 修复任务归属在 Windows 桌面端只显示当前值、难以新增或选择历史值的问题：已完成独立实现、首轮审核、修复复核与前端 88/88、Rust 测试、生产构建、格式和差异检查验证。它不改变本机服务接口、服务镜像、容器或用户数据，详见 `task-records/2026-07-30-codex-task-belonging-recovery.md`。
+- `codex/task-notification-rules` 修复自建任务当天三连提醒：实现提交 `fe3c2bf` 将开始/截止提醒限定为转交接收任务，并把逾期边界改为截止日期次日 0 点；定向提醒/日期测试 7/7、全量前端测试 116/116 和差异检查通过。待独立审核、生产构建和集成推送后进入下一次发布。
 
 ## 已知风险与门禁
 
