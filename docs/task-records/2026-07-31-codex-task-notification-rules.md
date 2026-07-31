@@ -57,4 +57,5 @@
 
 ### 集成
 
-- 待集成人 `/root` 合入 `main` 并推送远程。
+- 集成人 `/root` 已将审核通过的 `codex/task-notification-rules` 快进合入客户端 `main`。
+- 本任务只进入客户端源码主线；未创建版本 tag、Release 或 Windows 安装包，后续发布需另走独立发布任务。
