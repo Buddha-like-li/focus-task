@@ -1,11 +1,10 @@
 import type { Task } from '@/stores/taskStore'
 import { watch } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
-import { parseDateTimeLocal } from './dateTime'
+import { isOverdueDateTime, parseDateTimeLocal } from './dateTime'
 import { useSettingsStore } from '@/stores/settingsStore'
 
 const NOTIFICATION_LOG_KEY = 'focus-task-notification-log'
-const OVERDUE_GRACE_MS = 60000
 
 type NotificationKind = 'start' | 'due' | 'overdue'
 
@@ -53,6 +52,10 @@ function dueBody(task: Task, kind: NotificationKind) {
   return `任务“${task.title || '未命名任务'}”已过期，请尽快处理。`
 }
 
+function receivesScheduleReminder(task: Task): boolean {
+  return task.previousOwnerId != null
+}
+
 function shouldNotify(task: Task, kind: NotificationKind, now: number, leadMinutes: number) {
   if (task.done || task.deleted) return false
   const targetValue = kind === 'start' ? task.startAt : task.due
@@ -61,9 +64,9 @@ function shouldNotify(task: Task, kind: NotificationKind, now: number, leadMinut
   const targetMs = target.getTime()
   const leadMs = leadMinutes * 60000
 
-  if (kind === 'start') return task.notifyOnStart && targetMs - leadMs <= now
-  if (kind === 'due') return task.notifyOnDue && targetMs - leadMs <= now
-  return task.notifyOnOverdue && targetMs + OVERDUE_GRACE_MS <= now
+  if (kind === 'start') return receivesScheduleReminder(task) && task.notifyOnStart && targetMs - leadMs <= now
+  if (kind === 'due') return receivesScheduleReminder(task) && task.notifyOnDue && targetMs - leadMs <= now
+  return task.notifyOnOverdue && isOverdueDateTime(targetValue, now)
 }
 
 export function startTaskNotifications(getTasks: () => Task[]) {

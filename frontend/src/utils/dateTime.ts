@@ -43,10 +43,14 @@ export function normalizeDateTimeLocal(value: string, fallbackTime = '09:00'): s
   return value
 }
 
-export function isOverdueDateTime(value: string): boolean {
+function nextLocalDayStartMs(date: Date): number {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate() + 1).getTime()
+}
+
+export function isOverdueDateTime(value: string, now = Date.now()): boolean {
   const date = parseDateTimeLocal(value)
   if (!date) return false
-  return date.getTime() < Date.now()
+  return nextLocalDayStartMs(date) <= now
 }
 
 export function formatRelativeDue(value: string): string {
