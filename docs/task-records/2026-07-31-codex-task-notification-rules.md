@@ -18,7 +18,7 @@
 | 审核者 | `/root/notification_rules_reviewer` |
 | 集成人 | `/root` |
 | 实现 SHA | 初始实现 `fe3c2bfc761202514ec35d52b97653cce8e49c7c`；审核修复 `eb8c62e4f40116dda222435580745f6a2039d8f8` |
-| 审核 SHA | 首轮审核对象 `157a54a4d84e0540fc51b87b607dc452fc7dce92`；修复复核待完成 |
+| 审核 SHA | 首轮审核对象 `157a54a4d84e0540fc51b87b607dc452fc7dce92`；修复复核对象 `f0e6dda2746ffd9c49b857ef1db8b577dda42482`；审核均为只读结论，无独立代码提交 |
 
 ## 诊断与设计
 
@@ -45,7 +45,7 @@
 ### 独立审核
 
 - `/root/notification_rules_reviewer` 首轮独立审核结论：无 P0/P1，初始实现可合入；发现 1 个 P2 口径差异，汇总页逾期数仍按截止当天未完成即逾期。
-- 修复复核待完成。
+- `/root/notification_rules_reviewer` 对 `eb8c62e4f40116dda222435580745f6a2039d8f8` 和文档回填提交完成只读修复复核：首轮 P2 已关闭，未发现新的 P0/P1，可进入集成关卡。
 
 ### 验证
 
@@ -57,4 +57,4 @@
 
 ### 集成
 
-- 待审核通过后由集成人 `/root` 合入 `main` 并推送远程。
+- 待集成人 `/root` 合入 `main` 并推送远程。
