@@ -202,7 +202,7 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
 import { useTaskStore, type Task } from '@/stores/taskStore'
-import { toDateKey } from '@/utils/dateTime'
+import { isOverdueDateTime, toDateKey } from '@/utils/dateTime'
 
 const store = useTaskStore()
 
@@ -331,8 +331,8 @@ function overdueInPeriod(range: PeriodRange): number {
     const due = toDateKey(task.due)
     if (!due) return false
     if (due < range.start || due > range.end) return false
-    // Overdue if not done by due date, or done after due date
-    if (!task.done) return true
+    // 截止日期当天不算逾期；未完成任务从截止日期次日开始计入。
+    if (!task.done) return isOverdueDateTime(task.due)
     const doneDate = doneDateOf(task)
     return doneDate > due
   }).length
