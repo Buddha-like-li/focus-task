@@ -15,10 +15,10 @@
 | 基线 SHA | `d26c38d888b019cce0ce27f3620f2d566096303a` |
 | 功能分支 | `codex/task-notification-rules` |
 | 实现者 | `/root` |
-| 审核者 | 待独立审核 |
+| 审核者 | `/root/notification_rules_reviewer` |
 | 集成人 | `/root` |
-| 实现 SHA | `fe3c2bfc761202514ec35d52b97653cce8e49c7c` |
-| 审核 SHA | 待独立审核 |
+| 实现 SHA | 初始实现 `fe3c2bfc761202514ec35d52b97653cce8e49c7c`；审核修复 `eb8c62e4f40116dda222435580745f6a2039d8f8` |
+| 审核 SHA | 首轮审核对象 `157a54a4d84e0540fc51b87b607dc452fc7dce92`；修复复核待完成 |
 
 ## 诊断与设计
 
@@ -40,16 +40,18 @@
 ### 实施
 
 - `fe3c2bfc761202514ec35d52b97653cce8e49c7c`：开始/截止提醒只对转交接收任务触发；逾期从截止日期次日开始；新增日期边界和提醒规则回归测试。
+- `eb8c62e4f40116dda222435580745f6a2039d8f8`：按独立审核发现，将汇总页逾期数接入同一逾期日期口径，避免截止当天未完成任务在总结页提前计入逾期。
 
 ### 独立审核
 
-- 待独立审核。
+- `/root/notification_rules_reviewer` 首轮独立审核结论：无 P0/P1，初始实现可合入；发现 1 个 P2 口径差异，汇总页逾期数仍按截止当天未完成即逾期。
+- 修复复核待完成。
 
 ### 验证
 
 - `npm test -- src/utils/notifications.test.ts src/utils/dateTime.test.ts`：通过，2 个测试文件、7 项测试。
-- `npm test`：通过，24 个测试文件、116 项测试。
-- `git diff --check`：通过。
+- `npm test`：通过，24 个测试文件、116 项测试；审核修复后复跑仍通过。
+- `git diff --check`：通过；审核修复后复跑仍通过。
 - `npm run build`：通过，包含类型检查与生产构建；仅保留既有动态导入提示。
 - `cargo fmt --check`：通过。
 
