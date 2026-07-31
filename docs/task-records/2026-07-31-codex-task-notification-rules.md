@@ -50,8 +50,8 @@
 - `npm test -- src/utils/notifications.test.ts src/utils/dateTime.test.ts`：通过，2 个测试文件、7 项测试。
 - `npm test`：通过，24 个测试文件、116 项测试。
 - `git diff --check`：通过。
-- `npm run build`：待集成前执行。
-- `cargo fmt --check`：待集成前执行。
+- `npm run build`：通过，包含类型检查与生产构建；仅保留既有动态导入提示。
+- `cargo fmt --check`：通过。
 
 ### 集成
 
